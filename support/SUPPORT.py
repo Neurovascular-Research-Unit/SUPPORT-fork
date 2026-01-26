@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from model.convhole import ConvHole2D
+from support.convhole import ConvHole2D
 
 class SUPPORT(nn.Module):
     """
