@@ -5,7 +5,7 @@ import configparser
 
 from tqdm import tqdm
 from utils.dataset import DatasetSUPPORT_test_stitch
-from model.SUPPORT import SUPPORT
+from support.SUPPORT import SUPPORT
 
 
 

@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils.dataset import gen_train_dataloader, random_transform
 from utils.util import parse_arguments
-from model.SUPPORT import SUPPORT
+from support.SUPPORT import SUPPORT
 
 
 def train(train_dataloader, model, optimizer, scaler, rng, writer, epoch, opt):

@@ -1,0 +1,26 @@
+{
+  "3+1D": {
+    "train": {
+      "n_epochs": 20,
+      "patch_size": [61, 128, 128],
+      "patch_interval": [1, 64, 64],
+      "batch_size": 16,
+      "prefetch_factor": 2,
+      "lr": 5e-4,
+      "depth": 5,
+      "bc_channels": 64,
+      "obo_channels": [32, 16],
+      "ll_channels": [64, 32, 16],
+      "unet_channels": [64, 128, 256, 512, 1024],
+      "bs_size": [3, 3],
+      "bp": "False",
+      "loss_coef": [0.5, 0.5]
+    },
+    "test": {
+      "patch_size": [61, 128, 128],
+      "patch_interval": [1, 64, 64],
+      "batch_size": 16,
+      "prefetch_factor": 2
+    }
+  }
+}
