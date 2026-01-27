@@ -3,9 +3,10 @@ def plotASCII(values, width=60, height=15):
     """Plot values as ASCII scatter plot with auto-scaling y-axis."""
     if len(values) == 0 or np.any(np.isnan(values)):
         return
-    vals = vals.copy()
-    vals += 1e-6
-    vals = np.log10(vals)
+    if not hasattr(values, "__iter__") or isinstance(values, (float, int, np.floating, np.integer)):
+        vals = np.array([values], dtype=float)
+    else:
+        vals = np.array(values, dtype=float)
     y_min, y_max = min(vals), max(vals)
     y_range = y_max - y_min if y_max > y_min else 0.001
     

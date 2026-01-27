@@ -325,13 +325,18 @@ class DatasetSUPPORT(Dataset):
         if self.load_to_memory:
             noisy_image = self.noisy_images[ds_idx][t_range, y_range, z_range]
         else:
-            noisy_image_avg = torch.tensor(self.noisy_images[ds_idx].attrs["mean"])
-            noisy_image_std = torch.tensor(self.noisy_images[ds_idx].attrs["std"])
-            noisy_image = self.noisy_images[ds_idx][t_range, y_range, z_range]
-            noisy_image = torch.tensor(noisy_image, dtype=torch.float32)
-            return noisy_image, torch.tensor([[t_idx, t_idx + self.patch_size[0]],\
-                [y_idx, y_idx + self.patch_size[1]], [z_idx, z_idx + self.patch_size[2]]]), torch.tensor(ds_idx), noisy_image_avg, noisy_image_std
-        
+            img_obj = self.noisy_images[ds_idx]
+            # if on-disk object with attrs (e.g., zarr/tiff), use slicing and convert
+            if hasattr(img_obj, "attrs"):
+                noisy_image = img_obj[t_range, y_range, z_range]
+                noisy_image = torch.tensor(noisy_image, dtype=torch.float32)
+            else:
+                # handle in-memory torch.Tensor or numpy array
+                if isinstance(img_obj, torch.Tensor):
+                    full_img = img_obj
+                else:
+                    full_img = torch.from_numpy(np.asarray(img_obj)).to(torch.float32)
+                noisy_image = full_img[t_range, y_range, z_range].to(torch.float32)
         return noisy_image, torch.tensor([[t_idx, t_idx + self.patch_size[0]],\
             [y_idx, y_idx + self.patch_size[1]], [z_idx, z_idx + self.patch_size[2]]]), torch.tensor(ds_idx)
 
@@ -450,7 +455,7 @@ class training_class():
         # AUTOMATED
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.is_dir = False
-        # if Path(self.in_path).is_dir(): self.is_dir = True
+        if Path(self.in_path).is_dir(): self.is_dir = True
         self.set_params(params_dict)
 
     def run(self):
@@ -492,13 +497,12 @@ class training_class():
         """
         
         """
-        print(self.is_dir)
         noisy_imgs = []
         print("\033[1;31mLoaded Files -----> \033[0m")
         if self.is_dir:
             noisy_paths = list(Path(self.in_path).glob('*.tif'))
             noisy_paths = [str(path) for path in noisy_paths]
-            noisy_paths = noisy_paths.sort()
+            noisy_paths.sort()
             noisy_stems = [str(Path(path).stem) for path in noisy_paths]
             slen = max((len(s) for s in noisy_stems), default=0)
             for i, path in enumerate(noisy_paths):
@@ -508,7 +512,8 @@ class training_class():
                 noisy_stem = noisy_stems[i]
                 noisy_shape = noisy_img.shape
                 if self.dimensionality == "3+1D":
-                    T, Z, Y, X = noisy_shape
+                    T, Y, X = noisy_shape
+                    Z = len(noisy_paths)
                     print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z, T) = ({X}, {Y}, {Z}, {T})")
                 elif self.dimensionality == "2+1D":
                     T, Y, X = noisy_shape
@@ -561,8 +566,8 @@ class training_class():
         Initialize U-Net 3D network, which is the main network architecture of DeepCAD
 
         Important Fields:
-           self.local_model: the denoise network
-           
+            self.local_model: the denoise network
+
         """
         model = SUPPORT(
             in_channels=self.patch_size[0],
@@ -580,7 +585,7 @@ class training_class():
         """
         
         """
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.optimizer = torch.optim.Adam(self.local_model.parameters(), lr=self.lr)
         if self.cuda: self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
         else: self.scaler = torch.amp.GradScaler('cpu', enabled=self.use_amp)
         if self.cuda: self.local_model = self.local_model.cuda()
@@ -610,7 +615,7 @@ class training_class():
             corr_list: list of correlation of each batch ([float])
         """
         self.rotate = True if self.bs_size[0] == self.bs_size[1] else False
-        self.model.train()
+        self.local_model.train()
         L1_pixelwise = torch.nn.L1Loss()
         L2_pixelwise = torch.nn.MSELoss()
         lh_L = []
@@ -620,39 +625,39 @@ class training_class():
         with tqdm(self.dataloader, unit='batches', desc=f'Epoch {self.epoch}') as pbar:
             for i, data in enumerate(pbar):
                 (noisy_img, _, ds_idx) = data
-            B, T, X, Y = noisy_img.shape
-            noisy_img = noisy_img.cuda()
-            noisy_img, _ = random_transform(
-                input=noisy_img, 
-                target=None, 
-                rng=self.rng, 
-                is_rotate=self.rotate
-            )
-            noisy_img_target = torch.unsqueeze(noisy_img[:,int(T/2),:,:], dim=1)
-            self.optimizer.zero_grad()
-            
-            # Forward pass wrapped in autocast for AMP
-            with torch.amp.autocast('cuda', enabled=self.use_amp):
-                denoised_img = self.local_model(noisy_img)
-                loss_L1_pixelwise = L1_pixelwise(denoised_img, noisy_img_target)
-                loss_L2_pixelwise = L2_pixelwise(denoised_img, noisy_img_target)
-                loss_sum = self.loss_coef[0] * loss_L1_pixelwise + self.loss_coef[1] * loss_L2_pixelwise
+                B, T, X, Y = noisy_img.shape
+                noisy_img = noisy_img.cuda()
+                noisy_img, _ = random_transform(
+                    input=noisy_img, 
+                    target=None, 
+                    rng=self.rng, 
+                    is_rotate=self.rotate
+                )
+                noisy_img_target = torch.unsqueeze(noisy_img[:,int(T/2),:,:], dim=1)
+                self.optimizer.zero_grad()
                 
-            # Backward pass with GradScaler if AMP is enabled
-            self.scaler.scale(loss_sum).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-            
-            lh_L.append(loss_sum.item())
-            lh_L1.append(loss_L1_pixelwise.item())
-            lh_L2.append(loss_L2_pixelwise.item())
-            pbar.set_postfix(
-                {
-                    'L':np.mean(np.array(lh_L)), 
-                    'L1': np.mean(np.array(lh_L1)), 
-                    'L2': np.mean(np.array(lh_L2))
-                }
-            )
+                # Forward pass wrapped in autocast for AMP
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
+                    denoised_img = self.local_model(noisy_img)
+                    loss_L1_pixelwise = L1_pixelwise(denoised_img, noisy_img_target)
+                    loss_L2_pixelwise = L2_pixelwise(denoised_img, noisy_img_target)
+                    loss_sum = self.loss_coef[0] * loss_L1_pixelwise + self.loss_coef[1] * loss_L2_pixelwise
+                    
+                # Backward pass with GradScaler if AMP is enabled
+                self.scaler.scale(loss_sum).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                
+                lh_L.append(loss_sum.item())
+                lh_L1.append(loss_L1_pixelwise.item())
+                lh_L2.append(loss_L2_pixelwise.item())
+                pbar.set_postfix(
+                    {
+                        'L':np.mean(np.array(lh_L)), 
+                        'L1': np.mean(np.array(lh_L1)), 
+                        'L2': np.mean(np.array(lh_L2))
+                    }
+                )
         self.lh_L = lh_L
         self.lh_L1 = lh_L1
         self.lh_L2 = lh_L2
@@ -663,18 +668,18 @@ class training_class():
         """
         t_init = time.mktime(time.localtime())
         lh = []
-        for epoch in range(self.epoch, self.n_epochs):
+        for epoch in range(self.n_epochs):
+            self.epoch = epoch
             self.dataloader.dataset.precompute_indices()
             self.train()
             t_inter = int(time.mktime(time.localtime()) - t_init)
             L_mean = np.mean(np.array(self.lh_L))
-            L1_mean = np.mean(np.array(self.lh_1))
+            L1_mean = np.mean(np.array(self.lh_L1))
             L2_mean = np.mean(np.array(self.lh_L2))
             lh.append(L_mean)
             plotASCII(lh)
             if epoch == self.n_epochs or epoch == self.n_epochs-1: torch.save(self.local_model.state_dict(), self.pth_dir + f'/model{epoch+1:03d}.pth')
             if epoch % 5 == 0:
                 clear_output()
-        
 
-            
+

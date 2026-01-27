@@ -80,6 +80,7 @@ if __name__ == '__main__':
     model_name = '20251007_FOV1_2D_Ch2'
     model_name = 'GC8_221_ChronicCrani'
     model_name = 'Cdh5_40 M_20250113_FOV1_4D_Ch1_Z000'
+    model_name = 
     model_epoch = 19  # Which epoch to test (e.g., 9 for model_9.pth)
     
     # Input data file to denoise

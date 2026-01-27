@@ -1,0 +1,9 @@
+*.pth
+__pycache__
+*.pyc
+*.tif
+.DS_Store
+*.DS_Store
+onnx
+pth
+tmp
