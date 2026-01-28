@@ -5,6 +5,8 @@ Self-supervised imaging denoising and enhancement tailored for neurovascular res
 
 - [Anaconda](https://www.anaconda.com/products/distribution) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html) installed
 - NVIDIA GPU with CUDA support (recommended for training and inference)
+  - CUDA 11.8 or higher is recommended
+  - Check your CUDA version with `nvidia-smi`
 - At least 8GB of RAM (more recommended for larger datasets)
 
 ## Installation
@@ -71,7 +73,7 @@ python -m ipykernel install --user --name SUPPORT --display-name "SUPPORT"
    rm_dir = True  # Whether to remove checkpoints after training
    ```
    
-   In the third cell, you can adjust system-specific parameters:
+   In the third code cell (fourth cell overall), you can adjust system-specific parameters:
    
    ```python
    out_dir = None  # Optional: output directory (defaults to current directory)
