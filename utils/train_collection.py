@@ -74,6 +74,7 @@ class TrainingClass():
         """
         General function for training SUPPORT network.
         """
+        self.prepare_file()
         self.generate_dataloader()
         self.initialize_network()
         self.initialize_optimizer()
@@ -155,7 +156,7 @@ class TrainingClass():
                 print(f"\033[1m{noisy_stem:<{slen}}\033[0m  Shape: {noisy_shape}")
     
         dataset = DatasetSUPPORT(
-            noisy_images=noisy_imgs,
+            noisy_imgs=noisy_imgs,
             patch_size=self.patch_size,
             patch_interval=self.patch_interval,
             transform=None,

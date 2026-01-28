@@ -189,11 +189,11 @@ def get_coordinate(img_size, patch_size, patch_interval):
 
 
 class DatasetSUPPORT(Dataset):
-    def __init__(self, noisy_images, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
+    def __init__(self, noisy_imgs, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
         transform=None, random_patch=True, random_patch_seed=0):
         """
         Arguments:
-            noisy_images: list of noisy image stack ([Tensor with dimension [t, x, y]])
+            noisy_imgs: list of noisy image stack ([Tensor with dimension [t, x, y]])
             patch_size: size of the patch ([int]), ([t, x, y])
             patch_interval: interval between each patch ([int]), ([t, x, y])
             load_to_memory: whether load data into memory or not (bool)
@@ -210,11 +210,11 @@ class DatasetSUPPORT(Dataset):
 
         # initialize
         self.data_weight = []
-        for noisy_image in noisy_images:
+        for noisy_img in noisy_imgs:
             if load_to_memory:
-                self.data_weight.append(torch.numel(noisy_image))
+                self.data_weight.append(torch.numel(noisy_img))
             else:
-                self.data_weight.append(np.prod(noisy_image.shape))
+                self.data_weight.append(np.prod(noisy_img.shape))
 
         self.patch_size = patch_size
         self.patch_interval = patch_interval
@@ -224,13 +224,13 @@ class DatasetSUPPORT(Dataset):
         self.precomputed_indices = None
         self.load_to_memory = load_to_memory
 
-        self.noisy_images = noisy_images
+        self.noisy_imgs = noisy_imgs
         self.mean_images = []
         self.std_images = []
         if load_to_memory:
-            for idx, noisy_image in enumerate(tqdm(noisy_images)):
-                noisy_image, mean_image, std_image = normalize(noisy_image)
-                self.noisy_images[idx] = noisy_image
+            for idx, noisy_img in enumerate(tqdm(noisy_imgs)):
+                noisy_img, mean_image, std_image = normalize(noisy_img)
+                self.noisy_imgs[idx] = noisy_img
                 self.mean_images.append(mean_image)
                 self.std_images.append(std_image)
             self.mean_images = torch.tensor(self.mean_images)
@@ -240,9 +240,9 @@ class DatasetSUPPORT(Dataset):
 
         # generate index
         self.indices_ds = []
-        for noisy_image in self.noisy_images:
+        for noisy_img in self.noisy_imgs:
             indices = []
-            tmp_size = noisy_image.shape
+            tmp_size = noisy_img.shape
             if np.any(tmp_size < np.array(self.patch_size)):
                 raise Exception("patch size is larger than data size")
 
@@ -262,9 +262,9 @@ class DatasetSUPPORT(Dataset):
         precomputed_indices = []
         
         # Iterate over each image in the dataset
-        for ds_idx, noisy_image in enumerate(self.noisy_images):
+        for ds_idx, noisy_img in enumerate(self.noisy_imgs):
             # Get the shape of the image (T, H, W)
-            shape = noisy_image.shape
+            shape = noisy_img.shape
             
             # Determine the number of patches available for this image.
             # Here, we use the precomputed indices list from __init__ (indices_ds)
@@ -314,29 +314,29 @@ class DatasetSUPPORT(Dataset):
         z_range = slice(z_idx, z_idx + self.patch_size[2])
         
         if self.load_to_memory:
-            noisy_image = self.noisy_images[ds_idx][t_range, y_range, z_range]
+            noisy_img = self.noisy_imgs[ds_idx][t_range, y_range, z_range]
         else:
-            img_obj = self.noisy_images[ds_idx]
+            img_obj = self.noisy_imgs[ds_idx]
             # if on-disk object with attrs (e.g., zarr/tiff), use slicing and convert
             if hasattr(img_obj, "attrs"):
-                noisy_image = img_obj[t_range, y_range, z_range]
-                noisy_image = torch.tensor(noisy_image, dtype=torch.float32)
+                noisy_img = img_obj[t_range, y_range, z_range]
+                noisy_img = torch.tensor(noisy_img, dtype=torch.float32)
             else:
                 # handle in-memory torch.Tensor or numpy array
                 if isinstance(img_obj, torch.Tensor):
                     full_img = img_obj
                 else:
                     full_img = torch.from_numpy(np.asarray(img_obj)).to(torch.float32)
-                noisy_image = full_img[t_range, y_range, z_range].to(torch.float32)
-        return noisy_image, torch.tensor([[t_idx, t_idx + self.patch_size[0]],\
+                noisy_img = full_img[t_range, y_range, z_range].to(torch.float32)
+        return noisy_img, torch.tensor([[t_idx, t_idx + self.patch_size[0]],\
             [y_idx, y_idx + self.patch_size[1]], [z_idx, z_idx + self.patch_size[2]]]), torch.tensor(ds_idx)
 
 class DatasetSUPPORT_test_stitch(Dataset):
-    def __init__(self, noisy_image, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
+    def __init__(self, noisy_img, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
         transform=None, random_patch=False, random_patch_seed=0):
         """
         Arguments:
-            noisy_image: noisy image stack (Tensor with dimension [t, x, y])
+            noisy_img: noisy image stack (Tensor with dimension [t, x, y])
             patch_size: size of the patch ([int]), ([t, x, y])
             patch_interval: interval between each patch ([int]), ([t, x, y])
             load_to_memory: whether load data into memory or not (bool)
@@ -355,12 +355,24 @@ class DatasetSUPPORT_test_stitch(Dataset):
         self.transform = transform
         self.random_patch = random_patch
         self.patch_rng = np.random.default_rng(random_patch_seed)
-        self.noisy_image = noisy_image
-        self.noisy_image, self.mean_image, self.std_image = normalize(self.noisy_image)
+        self.noisy_img = noisy_img
+        self.load_to_memory = load_to_memory
+        # ensure dataset exposes mean_img and std_img for downstream code
+        try:
+            if isinstance(self.noisy_img, torch.Tensor):
+                self.mean_img = self.noisy_img.mean().float()
+                self.std_img = self.noisy_img.std().float()
+            else:
+                self.mean_img = torch.tensor(np.mean(self.noisy_img), dtype=torch.float32)
+                self.std_img = torch.tensor(np.std(self.noisy_img), dtype=torch.float32)
+        except Exception:
+            # fallback to scalar defaults
+            self.mean_img = torch.tensor(0.0, dtype=torch.float32)
+            self.std_img = torch.tensor(1.0, dtype=torch.float32)
 
         # generate index
         self.indices = []
-        tmp_size = self.noisy_image.size()
+        tmp_size = self.noisy_img.size()
         if np.any(tmp_size < np.array(self.patch_size)):
             raise Exception("patch size is larger than data size")
 
@@ -386,12 +398,12 @@ class DatasetSUPPORT_test_stitch(Dataset):
         end_s = single_coordinate['end_s']
 
         # for stitching dataset range
-        noisy_image = self.noisy_image[init_s:end_s,init_h:end_h,init_w:end_w]
+        noisy_img = self.noisy_img[init_s:end_s,init_h:end_h,init_w:end_w]
 
         # transform
         if self.transform:
             rand_i = self.patch_rng.integers(0, self.transform.n_masks)
             rand_t = self.patch_rng.integers(0, 2)
-            noisy_image = self.transform.mask(noisy_image, rand_i, rand_t)
+            noisy_img = self.transform.mask(noisy_img, rand_i, rand_t)
 
-        return noisy_image, torch.empty(1), single_coordinate
+        return noisy_img, torch.empty(1), single_coordinate

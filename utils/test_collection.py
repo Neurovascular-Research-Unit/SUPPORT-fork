@@ -66,10 +66,8 @@ class TestingClass():
         """
         General function for training SUPPORT network.
         """
-        self.set_params()
         self.initialize_network()
-        self.generate_dataloader()
-        self.test()
+        self.run_test()
         
     def prepare_file(self):
         if self.exp_name is None: self.exp_name = Path(self.in_path).stem
@@ -109,19 +107,19 @@ class TestingClass():
             bs_size=self.bs_size,
             bp=self.bp
         )
-        checkpoint = torch.load(self.model_path, weights_only=True)
-        model.load_state_dict(checkpoint)
         self.local_model = model
+        checkpoint = torch.load(self.model_path, weights_only=True)
+        self.local_model.load_state_dict(checkpoint)
+        self.local_model.to('cuda')
         
     def generate_dataloader(self, path):
         """"""
-        print("\033[1;31mLoaded Files -----> \033[0m")
         noisy_img = tifffile.TiffFile(path).asarray()
         noisy_img = noisy_img.astype(np.float32, copy=False)
         if self.pad: noisy_img = np.pad(noisy_img, (((self.local_model.in_channels)//2, (self.local_model.in_channels)//2), (0,0), (0,0)), 'reflect')
         noisy_img = torch.from_numpy(noisy_img).type(torch.FloatTensor)
         test_set = DatasetSUPPORT_test_stitch(
-            noisy_image=noisy_img, 
+            noisy_img=noisy_img, 
             patch_size=self.patch_size, 
             patch_interval=self.patch_interval,
             transform=None,
@@ -177,26 +175,25 @@ class TestingClass():
                         = noisy_img_denoised[bi].squeeze()[patch_start_h:patch_end_h, patch_start_w:patch_end_w].cpu()
 
             # change nan values to 0 and denormalize
-            denoised_stack = denoised_stack * self.dataloader.dataset.std_img.numpy() + self.dataloader.dataset.mean_img.numpy()
-
-            return denoised_stack
+            self.denoised_stack = denoised_stack * self.dataloader.dataset.std_img.numpy() + self.dataloader.dataset.mean_img.numpy()
         
-    def compile(self, dimensionality):
+    def compile(self):
         """
         """
         denoised_paths = list(Path(self.out_dir).glob(f'{self.exp_name}*.tif'))
         denoised_paths = [str(path) for path in denoised_paths]
         denoised_paths.sort()
         denoised_img = []
-        for path in denoised_paths:
+        for path in denoised_paths[:2]:
             denoised_img.append(tifffile.TiffFile(path).asarray())
-        denoised_img = np.stack(denoised_img, axis=0)
-        for path in denoised_paths: shutil.rmtree(path)
+        denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
+        for path in denoised_paths: Path(path).unlink()
         out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
-        tifffile.imwrite(self.denoised_img, metadata={'axes':'TZYX'})
+        tifffile.imwrite(out_path, denoised_img, imagej=True, metadata={'axes': 'TZYX'})
         
         
-    def run(self):
+        
+    def run_test(self):
         """
         """
         if self.is_dir:
@@ -204,9 +201,10 @@ class TestingClass():
             noisy_paths = [str(path) for path in noisy_paths]
             noisy_paths.sort()
             noisy_stems = [str(Path(path).stem) for path in noisy_paths]
-            for i, path in enumerate(noisy_paths):
+            for i, path in enumerate(noisy_paths[:2]):
                 out_path = self.out_dir+f'/{self.exp_name}_{i:03d}.tif'
-                print(f'Running inference on \033[1m{noisy_stems[i]}\033[0m')
+                print("\033[1;31mRunning inference on\033[0m")
+                print(f'\033[1m{noisy_stems[i]}\033[0m')
                 self.generate_dataloader(path)
                 self.test()
                 print(f'Saving denoised \033[1m{noisy_stems[i]}\033[0m to {out_path}')
