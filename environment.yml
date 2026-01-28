@@ -1,0 +1,23 @@
+name: SUPPORT
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=11.8
+  - numpy
+  - tifffile
+  - scikit-image
+  - tqdm
+  - ipython
+  - jupyter
+  - notebook
+  - tensorboard
+  - matplotlib
+  - pip
+  - pip:
+    - ipykernel
