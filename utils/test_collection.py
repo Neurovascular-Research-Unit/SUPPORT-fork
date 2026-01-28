@@ -184,7 +184,7 @@ class TestingClass():
         denoised_paths = [str(path) for path in denoised_paths]
         denoised_paths.sort()
         denoised_img = []
-        for path in denoised_paths[:2]:
+        for path in denoised_paths:
             denoised_img.append(tifffile.TiffFile(path).asarray())
         denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
         for path in denoised_paths: Path(path).unlink()
@@ -201,7 +201,7 @@ class TestingClass():
             noisy_paths = [str(path) for path in noisy_paths]
             noisy_paths.sort()
             noisy_stems = [str(Path(path).stem) for path in noisy_paths]
-            for i, path in enumerate(noisy_paths[:2]):
+            for i, path in enumerate(noisy_paths):
                 out_path = self.out_dir+f'/{self.exp_name}_{i:03d}.tif'
                 print("\033[1;31mRunning inference on\033[0m")
                 print(f'\033[1m{noisy_stems[i]}\033[0m')
