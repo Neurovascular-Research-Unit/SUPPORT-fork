@@ -196,7 +196,7 @@ class TestingClass():
         tifffile.imwrite(self.denoised_img, metadata={'axes':'TZYX'})
         
         
-    def run_test(self):
+    def run(self):
         """
         """
         if self.is_dir:

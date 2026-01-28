@@ -67,12 +67,13 @@ class TrainingClass():
         self.is_dir = False
         if Path(self.in_path).is_dir(): self.is_dir = True
         self.set_params(params_dict)
-
+        
+    def vars_dict(self): self.prepare_file()
+        
     def run(self):
         """
         General function for training SUPPORT network.
         """
-        self.prepare_file()
         self.generate_dataloader()
         self.initialize_network()
         self.initialize_optimizer()

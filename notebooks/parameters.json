@@ -20,7 +20,8 @@
       "patch_size": [61, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 16,
-      "prefetch_factor": 2
+      "prefetch_factor": 2,
+      "pad": "True"
     }
   }
 }

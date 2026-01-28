@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import math
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 def random_transform(input, target, rng, is_rotate=True):
     """
