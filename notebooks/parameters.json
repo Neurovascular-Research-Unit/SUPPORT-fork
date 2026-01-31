@@ -19,7 +19,31 @@
     "test": {
       "patch_size": [61, 128, 128],
       "patch_interval": [1, 64, 64],
-      "batch_size": 16,
+      "batch_size": 512,
+      "prefetch_factor": 2,
+      "pad": "True"
+    }
+  },
+  "3D": {
+    "train": {
+      "n_epochs": 150,
+      "patch_size": [21, 128, 128],
+      "patch_interval": [1, 64, 64],
+      "batch_size": 128,
+      "prefetch_factor": 2,
+      "lr": 5e-5,
+      "depth": 5,
+      "bc_channels": 64,
+      "obo_channels": [32, 16],
+      "ll_channels": [64, 32, 16],
+      "unet_channels": [256, 512, 1024, 2048, 4096],
+      "bs_size": [5, 5],
+      "bp": "False",
+      "loss_coef": [0.5, 0.5]
+    },
+    "test": {
+      "patch_interval": [1, 64, 64],
+      "batch_size": 128,
       "prefetch_factor": 2,
       "pad": "True"
     }
