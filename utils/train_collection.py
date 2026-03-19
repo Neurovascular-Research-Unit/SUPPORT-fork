@@ -10,6 +10,7 @@ from support.SUPPORT import SUPPORT
 import time
 from tqdm import tqdm
 import random
+from utils.log_methods import LogManager
 from utils.dataset import random_transform, DatasetSUPPORT
 from torch.utils.data import DataLoader
 from utils.loss_plot import plotASCII
@@ -64,8 +65,7 @@ class TrainingClass():
         
         # AUTOMATED
         self.cuda = torch.cuda.is_available() and not self.use_cpu
-        self.is_dir = False
-        if Path(self.in_path).is_dir(): self.is_dir = True
+        self.is_dir = False 
         self.set_params(params_dict)
         
     def vars_dict(self): self.prepare_file()
@@ -79,6 +79,15 @@ class TrainingClass():
         self.initialize_network()
         self.initialize_optimizer()
         self.test()
+
+    def set_params(self, params_dict):
+        # This is where I would implement overlap factor
+        print('\033[1;31mTraining parameters -----> \033[0m')
+        for key, value in params_dict.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            print("{:30s} {:s} ".format(key, str(value)))
+        if Path(self.in_path).is_dir(): self.is_dir = True
 
     def prepare_file(self):
         if self.exp_name is None: self.exp_name = Path(self.in_path).stem
@@ -96,14 +105,11 @@ class TrainingClass():
         if not Path(self.out_dir).exists(): Path(self.out_dir).mkdir()
         if not Path(self.pth_dir).exists(): Path(self.pth_dir).mkdir()
         if not Path(self.onnx_dir).exists(): Path(self.onnx_dir).mkdir()
-
-    def set_params(self, params_dict):
-        # This is where I would implement overlap factor
-        print('\033[1;31mTraining parameters -----> \033[0m')
-        for key, value in params_dict.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            print("{:30s} {:s} ".format(key, str(value)))
+        try:
+            self.log = LogManager(self, mode="train", out_dir=self.out_dir, filename_prefix=self.exp_name)
+            self.log.log_params()
+        except Exception:
+            pass
 
     def generate_dataloader(self):
         """
@@ -143,6 +149,7 @@ class TrainingClass():
             noisy_stem = Path(self.in_path).stem
             slen = len(noisy_stem)
             noisy_shape = noisy_imgs.shape
+
             if self.dimensionality == "3+1D":
                 T, Z, Y, X = noisy_shape
                 print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z, T) = ({X}, {Y}, {Z}, {T})")
@@ -154,7 +161,7 @@ class TrainingClass():
                 print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z) = ({X}, {Y}, {Z})")
             else:
                 print(f"\033[1m{noisy_stem:<{slen}}\033[0m  Shape: {noisy_shape}")
-    
+            noisy_imgs = [noisy_imgs]
         dataset = DatasetSUPPORT(
             noisy_imgs=noisy_imgs,
             patch_size=self.patch_size,
@@ -280,6 +287,8 @@ class TrainingClass():
         """
         t_init = time.mktime(time.localtime())
         lh = []
+        clear_epochs_interval = 10
+        clear_epochs = np.arange(clear_epochs_interval, 100, clear_epochs_interval)
         for epoch in range(self.n_epochs):
             self.epoch = epoch
             self.dataloader.dataset.precompute_indices()
@@ -290,8 +299,13 @@ class TrainingClass():
             L2_mean = np.mean(np.array(self.lh_L2))
             lh.append(L_mean)
             plotASCII(lh)
+            if hasattr(self, "log"):
+                try:
+                    self.log.append_loss(epoch, loss_total=L_mean, loss_l1=L1_mean, loss_l2=L2_mean)
+                except Exception:
+                    pass
             if epoch == self.n_epochs or epoch == self.n_epochs-1: torch.save(self.local_model.state_dict(), self.pth_dir + f'/model{epoch+1:03d}.pth')
-            if epoch % 5 == 0:
-                clear_output()
+            if epoch in clear_epochs:
+                clear_output(wait=True)
 
 

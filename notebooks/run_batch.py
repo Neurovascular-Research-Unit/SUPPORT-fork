@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('./').resolve().parent.parent))
+
 import json
 import torch
 torch.cuda.empty_cache()
@@ -89,9 +90,15 @@ def run_all(path):
     test_cd.run()
     torch.cuda.empty_cache()
     
-paths = list(Path('/data/garfinkeljb/noisy_data').glob('*'))
-paths = [str(path) for path in paths]
+paths = list(Path('/data/garfinkeljb/CloudCode/noisy_data').glob('*'))
+paths = [str(path) for path in paths][::-1]
 for path in paths:
     run_all(path)
-    shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
-    shutil.rmtree(path)
+    try:
+        shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
+    except:
+        pass
+    try:
+        shutil.rmtree(path)
+    except:
+        pass

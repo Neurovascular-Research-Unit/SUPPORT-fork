@@ -6,7 +6,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import tifffile
-
+from utils.log_methods import LogManager
 from utils.dataset import DatasetSUPPORT_test_stitch
 from torch.utils.data import DataLoader
 from support.SUPPORT import SUPPORT
@@ -59,7 +59,6 @@ class TestingClass():
         # AUTOMATED
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.is_dir = False
-        if Path(self.in_path).is_dir(): self.is_dir = True
         self.set_params(params_dict)
         
     def run(self):
@@ -69,6 +68,15 @@ class TestingClass():
         self.initialize_network()
         self.run_test()
         
+    def set_params(self, params_dict):
+        # This is where I would implement overlap factor
+        print('\033[1;31mTesting parameters -----> \033[0m')
+        for key, value in params_dict.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+            print("{:30s} {:s} ".format(key, str(value)))
+        if Path(self.in_path).is_dir(): self.is_dir = True
+
     def prepare_file(self):
         if self.exp_name is None: self.exp_name = Path(self.in_path).stem
         self.cwd = str(Path("./").absolute())
@@ -80,14 +88,11 @@ class TestingClass():
             self.onnx_dir = self.tmp_dir + '/onnx'
         else:
             self.out_dir += f'/{self.exp_name}'
-    
-    def set_params(self, params_dict):
-        # This is where I would implement overlap factor
-        print('\033[1;31mTraining parameters -----> \033[0m')
-        for key, value in params_dict.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            print("{:30s} {:s} ".format(key, str(value)))
+        try:
+            self.log = LogManager(self, mode="test", out_dir=self.out_dir, filename_prefix=self.exp_name)
+            self.log.log_params()
+        except Exception:
+            pass
     
     def initialize_network(self):
         """
@@ -186,10 +191,19 @@ class TestingClass():
         denoised_img = []
         for path in denoised_paths:
             denoised_img.append(tifffile.TiffFile(path).asarray())
-        denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
-        for path in denoised_paths: Path(path).unlink()
+        if self.dimensionality == '(3+1)D':
+            denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
+        else:
+            denoised_img = np.array(denoised_img)
+        try:
+            for path in denoised_paths: Path(path).unlink()
+        except: pass
         out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
-        tifffile.imwrite(out_path, denoised_img, imagej=True, metadata={'axes': 'TZYX'})
+        print(out_path)
+        if self.dimensionality == '3+1D': 
+            tifffile.imwrite(out_path, denoised_img, imagej=True, metadata={'axes': 'TZYX'})
+        elif self.dimensionality == '2+1D':
+            tifffile.imwrite(out_path, denoised_img, imagej=True, metadata={'axes': 'TYX'})
         
         
         
@@ -197,6 +211,8 @@ class TestingClass():
         """
         """
         if self.is_dir:
+            out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
+            print(out_path)
             noisy_paths = list(Path(self.in_path).glob('*.tif'))
             noisy_paths = [str(path) for path in noisy_paths]
             noisy_paths.sort()
@@ -211,7 +227,7 @@ class TestingClass():
                 self.save_inference(out_path)
         else:
             noisy_stem = str(Path(self.in_path).stem)
-            out_path = self.out_dir+f'/{self.exp_name}_{i:03d}.tif'
+            out_path = self.out_dir+f'/{self.exp_name}.tif'
             print(f'Running inference on \033[1m{noisy_stem}\033[0m')
             self.generate_dataloader(self.in_path)
             self.test()

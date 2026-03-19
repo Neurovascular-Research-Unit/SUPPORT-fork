@@ -1,0 +1,1242 @@
+2026-03-16 12:54:41,918 Logged params
+2026-03-16 12:54:41,918 === RUN PARAMETERS ===
+2026-03-16 12:54:41,918 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,918 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 12:54:41,918 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,919 dimensionality: 3+1D
+2026-03-16 12:54:41,919 rm_dir: True
+2026-03-16 12:54:41,921 n_epochs: 10
+2026-03-16 12:54:41,921 rnd_seed: 0
+2026-03-16 12:54:41,921 cuda_device: 0
+2026-03-16 12:54:41,922 patch_size: [61, 128, 128]
+2026-03-16 12:54:41,923 patch_interval: [1, 64, 64]
+2026-03-16 12:54:41,923 batch_size: 128
+2026-03-16 12:54:41,924 depth: 5
+2026-03-16 12:54:41,924 bc_channels: 64
+2026-03-16 12:54:41,925 obo_channels: [32, 16]
+2026-03-16 12:54:41,925 ll_channels: [64, 32, 16]
+2026-03-16 12:54:41,926 bs_size: [3, 3]
+2026-03-16 12:54:41,926 bp: False
+2026-03-16 12:54:41,928 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 12:54:41,928 lr: 5e-05
+2026-03-16 12:54:41,929 loss_coef: [0.5, 0.5]
+2026-03-16 12:54:41,930 use_amp: False
+2026-03-16 12:54:41,931 use_cpu: False
+2026-03-16 12:54:41,931 n_cpu: 8
+2026-03-16 12:54:41,932 prefetch_factor: 2
+2026-03-16 12:54:41,932 cuda: True
+2026-03-16 12:54:41,933 is_dir: True
+2026-03-16 12:54:41,933 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 12:54:41,937 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,937 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 12:54:41,940 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 12:54:41,940 log: <utils.log_methods.LogManager object at 0x7fffdab1dd00>
+2026-03-16 12:54:41,941 _logged_at: 2026-03-16T12:54:41.915973
+2026-03-16 12:54:41,965 Logged params
+2026-03-16 12:54:41,965 === RUN PARAMETERS ===
+2026-03-16 12:54:41,965 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,965 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 12:54:41,965 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,966 dimensionality: 3+1D
+2026-03-16 12:54:41,966 rm_dir: True
+2026-03-16 12:54:41,967 n_epochs: 10
+2026-03-16 12:54:41,967 rnd_seed: 0
+2026-03-16 12:54:41,968 cuda_device: 0
+2026-03-16 12:54:41,968 patch_size: [61, 128, 128]
+2026-03-16 12:54:41,969 patch_interval: [1, 64, 64]
+2026-03-16 12:54:41,969 batch_size: 128
+2026-03-16 12:54:41,970 depth: 5
+2026-03-16 12:54:41,970 bc_channels: 64
+2026-03-16 12:54:41,972 obo_channels: [32, 16]
+2026-03-16 12:54:41,972 ll_channels: [64, 32, 16]
+2026-03-16 12:54:41,973 bs_size: [3, 3]
+2026-03-16 12:54:41,973 bp: False
+2026-03-16 12:54:41,974 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 12:54:41,974 lr: 5e-05
+2026-03-16 12:54:41,974 loss_coef: [0.5, 0.5]
+2026-03-16 12:54:41,975 use_amp: False
+2026-03-16 12:54:41,976 use_cpu: False
+2026-03-16 12:54:41,976 n_cpu: 8
+2026-03-16 12:54:41,977 prefetch_factor: 2
+2026-03-16 12:54:41,977 cuda: True
+2026-03-16 12:54:41,977 is_dir: True
+2026-03-16 12:54:41,977 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 12:54:41,978 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,978 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 12:54:41,980 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 12:54:41,980 log: <utils.log_methods.LogManager object at 0x7fffdab1dd00>
+2026-03-16 12:54:41,981 _logged_at: 2026-03-16T12:54:41.946280
+2026-03-16 12:54:41,988 Logged params
+2026-03-16 12:54:41,988 === RUN PARAMETERS ===
+2026-03-16 12:54:41,988 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,989 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 12:54:41,989 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:41,990 dimensionality: 3+1D
+2026-03-16 12:54:41,990 rm_dir: True
+2026-03-16 12:54:41,991 n_epochs: 10
+2026-03-16 12:54:41,991 rnd_seed: 0
+2026-03-16 12:54:41,992 cuda_device: 0
+2026-03-16 12:54:41,992 patch_size: [61, 128, 128]
+2026-03-16 12:54:41,994 patch_interval: [1, 64, 64]
+2026-03-16 12:54:41,994 batch_size: 128
+2026-03-16 12:54:41,996 depth: 5
+2026-03-16 12:54:41,996 bc_channels: 64
+2026-03-16 12:54:41,997 obo_channels: [32, 16]
+2026-03-16 12:54:41,997 ll_channels: [64, 32, 16]
+2026-03-16 12:54:41,998 bs_size: [3, 3]
+2026-03-16 12:54:41,998 bp: False
+2026-03-16 12:54:41,999 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 12:54:41,999 lr: 5e-05
+2026-03-16 12:54:42,000 loss_coef: [0.5, 0.5]
+2026-03-16 12:54:42,000 use_amp: False
+2026-03-16 12:54:42,001 use_cpu: False
+2026-03-16 12:54:42,001 n_cpu: 8
+2026-03-16 12:54:42,002 prefetch_factor: 2
+2026-03-16 12:54:42,002 cuda: True
+2026-03-16 12:54:42,003 is_dir: True
+2026-03-16 12:54:42,003 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 12:54:42,004 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 12:54:42,004 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 12:54:42,005 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 12:54:42,005 log: <utils.log_methods.LogManager object at 0x7fffda978fa0>
+2026-03-16 12:54:42,007 _logged_at: 2026-03-16T12:54:41.986067
+2026-03-16 12:57:12,506 Epoch 0: loss_total=66768.41491168478 l1=224.1193079077679 l2=133312.7104959239
+2026-03-16 12:59:33,792 Epoch 1: loss_total=65408.44312160326 l1=226.44087103138799 l2=130590.44527853261
+2026-03-16 13:01:55,164 Epoch 2: loss_total=65258.42762398098 l1=226.0021139725395 l2=130290.85324388587
+2026-03-16 13:04:16,743 Epoch 3: loss_total=65268.241431725546 l1=226.00575873333474 l2=130310.47686820652
+2026-03-16 13:06:37,925 Epoch 4: loss_total=65261.691864809785 l1=226.00797616709835 l2=130297.37564538044
+2026-03-16 13:08:59,047 Epoch 5: loss_total=65220.469038722826 l1=225.94429417485776 l2=130214.99375
+2026-03-16 13:10:19,550 Logged params
+2026-03-16 13:10:19,550 === RUN PARAMETERS ===
+2026-03-16 13:10:19,550 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,552 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:19,554 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,554 dimensionality: 3+1D
+2026-03-16 13:10:19,555 rm_dir: True
+2026-03-16 13:10:19,556 n_epochs: 10
+2026-03-16 13:10:19,557 rnd_seed: 0
+2026-03-16 13:10:19,558 cuda_device: 0
+2026-03-16 13:10:19,559 patch_size: [61, 128, 128]
+2026-03-16 13:10:19,560 patch_interval: [1, 64, 64]
+2026-03-16 13:10:19,560 batch_size: 128
+2026-03-16 13:10:19,561 depth: 5
+2026-03-16 13:10:19,562 bc_channels: 64
+2026-03-16 13:10:19,563 obo_channels: [32, 16]
+2026-03-16 13:10:19,565 ll_channels: [64, 32, 16]
+2026-03-16 13:10:19,566 bs_size: [3, 3]
+2026-03-16 13:10:19,567 bp: False
+2026-03-16 13:10:19,568 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:19,569 lr: 5e-05
+2026-03-16 13:10:19,570 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:19,572 use_amp: False
+2026-03-16 13:10:19,573 use_cpu: False
+2026-03-16 13:10:19,574 n_cpu: 8
+2026-03-16 13:10:19,575 prefetch_factor: 2
+2026-03-16 13:10:19,576 cuda: True
+2026-03-16 13:10:19,576 is_dir: True
+2026-03-16 13:10:19,577 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:19,578 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,578 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:19,579 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:19,579 log: <utils.log_methods.LogManager object at 0x7fff08f6e5b0>
+2026-03-16 13:10:19,580 _logged_at: 2026-03-16T13:10:19.546206
+2026-03-16 13:10:19,589 Logged params
+2026-03-16 13:10:19,589 === RUN PARAMETERS ===
+2026-03-16 13:10:19,589 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,590 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:19,590 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,592 dimensionality: 3+1D
+2026-03-16 13:10:19,592 rm_dir: True
+2026-03-16 13:10:19,593 n_epochs: 10
+2026-03-16 13:10:19,594 rnd_seed: 0
+2026-03-16 13:10:19,594 cuda_device: 0
+2026-03-16 13:10:19,595 patch_size: [61, 128, 128]
+2026-03-16 13:10:19,597 patch_interval: [1, 64, 64]
+2026-03-16 13:10:19,597 batch_size: 128
+2026-03-16 13:10:19,597 depth: 5
+2026-03-16 13:10:19,599 bc_channels: 64
+2026-03-16 13:10:19,599 obo_channels: [32, 16]
+2026-03-16 13:10:19,601 ll_channels: [64, 32, 16]
+2026-03-16 13:10:19,601 bs_size: [3, 3]
+2026-03-16 13:10:19,602 bp: False
+2026-03-16 13:10:19,602 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:19,603 lr: 5e-05
+2026-03-16 13:10:19,604 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:19,604 use_amp: False
+2026-03-16 13:10:19,605 use_cpu: False
+2026-03-16 13:10:19,605 n_cpu: 8
+2026-03-16 13:10:19,606 prefetch_factor: 2
+2026-03-16 13:10:19,606 cuda: True
+2026-03-16 13:10:19,607 is_dir: True
+2026-03-16 13:10:19,608 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:19,608 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,609 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:19,610 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:19,611 log: <utils.log_methods.LogManager object at 0x7fff08f6e5b0>
+2026-03-16 13:10:19,611 _logged_at: 2026-03-16T13:10:19.586925
+2026-03-16 13:10:19,621 Logged params
+2026-03-16 13:10:19,621 === RUN PARAMETERS ===
+2026-03-16 13:10:19,621 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,622 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:19,624 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,626 dimensionality: 3+1D
+2026-03-16 13:10:19,627 rm_dir: True
+2026-03-16 13:10:19,628 n_epochs: 10
+2026-03-16 13:10:19,628 rnd_seed: 0
+2026-03-16 13:10:19,629 cuda_device: 0
+2026-03-16 13:10:19,631 patch_size: [61, 128, 128]
+2026-03-16 13:10:19,632 patch_interval: [1, 64, 64]
+2026-03-16 13:10:19,632 batch_size: 128
+2026-03-16 13:10:19,633 depth: 5
+2026-03-16 13:10:19,634 bc_channels: 64
+2026-03-16 13:10:19,635 obo_channels: [32, 16]
+2026-03-16 13:10:19,635 ll_channels: [64, 32, 16]
+2026-03-16 13:10:19,636 bs_size: [3, 3]
+2026-03-16 13:10:19,636 bp: False
+2026-03-16 13:10:19,636 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:19,638 lr: 5e-05
+2026-03-16 13:10:19,639 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:19,639 use_amp: False
+2026-03-16 13:10:19,639 use_cpu: False
+2026-03-16 13:10:19,641 n_cpu: 8
+2026-03-16 13:10:19,641 prefetch_factor: 2
+2026-03-16 13:10:19,642 cuda: True
+2026-03-16 13:10:19,643 is_dir: True
+2026-03-16 13:10:19,643 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:19,644 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:19,645 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:19,645 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:19,646 log: <utils.log_methods.LogManager object at 0x7fff08fd8700>
+2026-03-16 13:10:19,646 _logged_at: 2026-03-16T13:10:19.618339
+2026-03-16 13:10:23,778 Logged params
+2026-03-16 13:10:23,778 === RUN PARAMETERS ===
+2026-03-16 13:10:23,778 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,779 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:23,779 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,781 dimensionality: 3+1D
+2026-03-16 13:10:23,782 rm_dir: True
+2026-03-16 13:10:23,782 n_epochs: 10
+2026-03-16 13:10:23,783 rnd_seed: 0
+2026-03-16 13:10:23,783 cuda_device: 0
+2026-03-16 13:10:23,784 patch_size: [61, 128, 128]
+2026-03-16 13:10:23,784 patch_interval: [1, 64, 64]
+2026-03-16 13:10:23,785 batch_size: 128
+2026-03-16 13:10:23,786 depth: 5
+2026-03-16 13:10:23,786 bc_channels: 64
+2026-03-16 13:10:23,786 obo_channels: [32, 16]
+2026-03-16 13:10:23,787 ll_channels: [64, 32, 16]
+2026-03-16 13:10:23,787 bs_size: [3, 3]
+2026-03-16 13:10:23,789 bp: False
+2026-03-16 13:10:23,789 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:23,790 lr: 5e-05
+2026-03-16 13:10:23,790 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:23,791 use_amp: False
+2026-03-16 13:10:23,791 use_cpu: False
+2026-03-16 13:10:23,793 n_cpu: 8
+2026-03-16 13:10:23,793 prefetch_factor: 2
+2026-03-16 13:10:23,794 cuda: True
+2026-03-16 13:10:23,794 is_dir: True
+2026-03-16 13:10:23,795 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:23,795 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,796 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:23,796 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:23,797 log: <utils.log_methods.LogManager object at 0x7fff08f6e5e0>
+2026-03-16 13:10:23,797 _logged_at: 2026-03-16T13:10:23.775661
+2026-03-16 13:10:23,806 Logged params
+2026-03-16 13:10:23,807 === RUN PARAMETERS ===
+2026-03-16 13:10:23,807 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,808 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:23,808 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,809 dimensionality: 3+1D
+2026-03-16 13:10:23,809 rm_dir: True
+2026-03-16 13:10:23,810 n_epochs: 10
+2026-03-16 13:10:23,810 rnd_seed: 0
+2026-03-16 13:10:23,812 cuda_device: 0
+2026-03-16 13:10:23,812 patch_size: [61, 128, 128]
+2026-03-16 13:10:23,812 patch_interval: [1, 64, 64]
+2026-03-16 13:10:23,813 batch_size: 128
+2026-03-16 13:10:23,813 depth: 5
+2026-03-16 13:10:23,814 bc_channels: 64
+2026-03-16 13:10:23,814 obo_channels: [32, 16]
+2026-03-16 13:10:23,815 ll_channels: [64, 32, 16]
+2026-03-16 13:10:23,815 bs_size: [3, 3]
+2026-03-16 13:10:23,816 bp: False
+2026-03-16 13:10:23,817 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:23,818 lr: 5e-05
+2026-03-16 13:10:23,818 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:23,819 use_amp: False
+2026-03-16 13:10:23,820 use_cpu: False
+2026-03-16 13:10:23,820 n_cpu: 8
+2026-03-16 13:10:23,820 prefetch_factor: 2
+2026-03-16 13:10:23,821 cuda: True
+2026-03-16 13:10:23,821 is_dir: True
+2026-03-16 13:10:23,822 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:23,822 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,822 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:23,823 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:23,823 log: <utils.log_methods.LogManager object at 0x7fff08f6e5e0>
+2026-03-16 13:10:23,823 _logged_at: 2026-03-16T13:10:23.802945
+2026-03-16 13:10:23,831 Logged params
+2026-03-16 13:10:23,831 === RUN PARAMETERS ===
+2026-03-16 13:10:23,831 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,833 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:23,833 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,834 dimensionality: 3+1D
+2026-03-16 13:10:23,834 rm_dir: True
+2026-03-16 13:10:23,835 n_epochs: 10
+2026-03-16 13:10:23,836 rnd_seed: 0
+2026-03-16 13:10:23,836 cuda_device: 0
+2026-03-16 13:10:23,837 patch_size: [61, 128, 128]
+2026-03-16 13:10:23,837 patch_interval: [1, 64, 64]
+2026-03-16 13:10:23,839 batch_size: 128
+2026-03-16 13:10:23,839 depth: 5
+2026-03-16 13:10:23,841 bc_channels: 64
+2026-03-16 13:10:23,841 obo_channels: [32, 16]
+2026-03-16 13:10:23,842 ll_channels: [64, 32, 16]
+2026-03-16 13:10:23,842 bs_size: [3, 3]
+2026-03-16 13:10:23,843 bp: False
+2026-03-16 13:10:23,843 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:23,844 lr: 5e-05
+2026-03-16 13:10:23,844 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:23,844 use_amp: False
+2026-03-16 13:10:23,844 use_cpu: False
+2026-03-16 13:10:23,844 n_cpu: 8
+2026-03-16 13:10:23,844 prefetch_factor: 2
+2026-03-16 13:10:23,844 cuda: True
+2026-03-16 13:10:23,844 is_dir: True
+2026-03-16 13:10:23,844 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:23,844 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:23,844 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:23,844 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:23,844 log: <utils.log_methods.LogManager object at 0x7ffefaf3b970>
+2026-03-16 13:10:23,844 _logged_at: 2026-03-16T13:10:23.829301
+2026-03-16 13:10:47,751 Logged params
+2026-03-16 13:10:47,751 === RUN PARAMETERS ===
+2026-03-16 13:10:47,751 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,753 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:47,753 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,754 dimensionality: 3+1D
+2026-03-16 13:10:47,754 rm_dir: True
+2026-03-16 13:10:47,756 n_epochs: 10
+2026-03-16 13:10:47,756 rnd_seed: 0
+2026-03-16 13:10:47,756 cuda_device: 0
+2026-03-16 13:10:47,757 patch_size: [61, 128, 128]
+2026-03-16 13:10:47,757 patch_interval: [1, 64, 64]
+2026-03-16 13:10:47,758 batch_size: 128
+2026-03-16 13:10:47,759 depth: 5
+2026-03-16 13:10:47,760 bc_channels: 64
+2026-03-16 13:10:47,760 obo_channels: [32, 16]
+2026-03-16 13:10:47,761 ll_channels: [64, 32, 16]
+2026-03-16 13:10:47,761 bs_size: [3, 3]
+2026-03-16 13:10:47,762 bp: False
+2026-03-16 13:10:47,762 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:47,763 lr: 5e-05
+2026-03-16 13:10:47,763 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:47,764 use_amp: False
+2026-03-16 13:10:47,764 use_cpu: False
+2026-03-16 13:10:47,765 n_cpu: 8
+2026-03-16 13:10:47,765 prefetch_factor: 2
+2026-03-16 13:10:47,766 cuda: True
+2026-03-16 13:10:47,766 is_dir: True
+2026-03-16 13:10:47,766 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:47,766 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,768 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:47,768 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:47,769 log: <utils.log_methods.LogManager object at 0x7fffdb37dee0>
+2026-03-16 13:10:47,769 _logged_at: 2026-03-16T13:10:47.748923
+2026-03-16 13:10:47,777 Logged params
+2026-03-16 13:10:47,778 === RUN PARAMETERS ===
+2026-03-16 13:10:47,778 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,779 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:47,780 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,780 dimensionality: 3+1D
+2026-03-16 13:10:47,782 rm_dir: True
+2026-03-16 13:10:47,782 n_epochs: 10
+2026-03-16 13:10:47,783 rnd_seed: 0
+2026-03-16 13:10:47,783 cuda_device: 0
+2026-03-16 13:10:47,784 patch_size: [61, 128, 128]
+2026-03-16 13:10:47,784 patch_interval: [1, 64, 64]
+2026-03-16 13:10:47,785 batch_size: 128
+2026-03-16 13:10:47,785 depth: 5
+2026-03-16 13:10:47,786 bc_channels: 64
+2026-03-16 13:10:47,786 obo_channels: [32, 16]
+2026-03-16 13:10:47,787 ll_channels: [64, 32, 16]
+2026-03-16 13:10:47,787 bs_size: [3, 3]
+2026-03-16 13:10:47,788 bp: False
+2026-03-16 13:10:47,788 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:47,790 lr: 5e-05
+2026-03-16 13:10:47,790 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:47,792 use_amp: False
+2026-03-16 13:10:47,792 use_cpu: False
+2026-03-16 13:10:47,792 n_cpu: 8
+2026-03-16 13:10:47,793 prefetch_factor: 2
+2026-03-16 13:10:47,794 cuda: True
+2026-03-16 13:10:47,795 is_dir: True
+2026-03-16 13:10:47,796 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:47,796 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,796 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:47,797 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:47,797 log: <utils.log_methods.LogManager object at 0x7fffdb37dee0>
+2026-03-16 13:10:47,797 _logged_at: 2026-03-16T13:10:47.775261
+2026-03-16 13:10:47,806 Logged params
+2026-03-16 13:10:47,806 === RUN PARAMETERS ===
+2026-03-16 13:10:47,806 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,807 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:10:47,808 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,809 dimensionality: 3+1D
+2026-03-16 13:10:47,809 rm_dir: True
+2026-03-16 13:10:47,810 n_epochs: 10
+2026-03-16 13:10:47,810 rnd_seed: 0
+2026-03-16 13:10:47,811 cuda_device: 0
+2026-03-16 13:10:47,811 patch_size: [61, 128, 128]
+2026-03-16 13:10:47,812 patch_interval: [1, 64, 64]
+2026-03-16 13:10:47,812 batch_size: 128
+2026-03-16 13:10:47,813 depth: 5
+2026-03-16 13:10:47,813 bc_channels: 64
+2026-03-16 13:10:47,815 obo_channels: [32, 16]
+2026-03-16 13:10:47,815 ll_channels: [64, 32, 16]
+2026-03-16 13:10:47,816 bs_size: [3, 3]
+2026-03-16 13:10:47,816 bp: False
+2026-03-16 13:10:47,817 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:10:47,817 lr: 5e-05
+2026-03-16 13:10:47,819 loss_coef: [0.5, 0.5]
+2026-03-16 13:10:47,819 use_amp: False
+2026-03-16 13:10:47,820 use_cpu: False
+2026-03-16 13:10:47,820 n_cpu: 8
+2026-03-16 13:10:47,821 prefetch_factor: 2
+2026-03-16 13:10:47,821 cuda: True
+2026-03-16 13:10:47,822 is_dir: True
+2026-03-16 13:10:47,822 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:10:47,823 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:10:47,823 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:10:47,824 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:10:47,824 log: <utils.log_methods.LogManager object at 0x7fffda978f40>
+2026-03-16 13:10:47,825 _logged_at: 2026-03-16T13:10:47.803593
+2026-03-16 13:11:49,573 Epoch 6: loss_total=65188.573607336955 l1=225.87455023060673 l2=130151.27289402173
+2026-03-16 13:15:44,634 Epoch 0: loss_total=66601.27831182066 l1=224.5203261665676 l2=132978.03654891305
+2026-03-16 13:16:40,018 Epoch 7: loss_total=65249.07903362772 l1=226.06053018984588 l2=130272.09750339674
+2026-03-16 13:18:16,904 Logged params
+2026-03-16 13:18:16,905 === RUN PARAMETERS ===
+2026-03-16 13:18:16,905 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,905 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:18:16,906 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,906 dimensionality: 3+1D
+2026-03-16 13:18:16,906 rm_dir: True
+2026-03-16 13:18:16,906 n_epochs: 10
+2026-03-16 13:18:16,906 rnd_seed: 0
+2026-03-16 13:18:16,907 cuda_device: 0
+2026-03-16 13:18:16,907 patch_size: [61, 128, 128]
+2026-03-16 13:18:16,909 patch_interval: [1, 64, 64]
+2026-03-16 13:18:16,909 batch_size: 128
+2026-03-16 13:18:16,910 depth: 5
+2026-03-16 13:18:16,910 bc_channels: 64
+2026-03-16 13:18:16,910 obo_channels: [32, 16]
+2026-03-16 13:18:16,911 ll_channels: [64, 32, 16]
+2026-03-16 13:18:16,911 bs_size: [3, 3]
+2026-03-16 13:18:16,913 bp: False
+2026-03-16 13:18:16,913 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:18:16,914 lr: 5e-05
+2026-03-16 13:18:16,914 loss_coef: [0.5, 0.5]
+2026-03-16 13:18:16,915 use_amp: False
+2026-03-16 13:18:16,915 use_cpu: False
+2026-03-16 13:18:16,916 n_cpu: 8
+2026-03-16 13:18:16,916 prefetch_factor: 2
+2026-03-16 13:18:16,918 cuda: True
+2026-03-16 13:18:16,918 is_dir: True
+2026-03-16 13:18:16,919 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:18:16,919 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,920 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:18:16,920 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:18:16,921 log: <utils.log_methods.LogManager object at 0x7fffdab11640>
+2026-03-16 13:18:16,921 _logged_at: 2026-03-16T13:18:16.901737
+2026-03-16 13:18:16,930 Logged params
+2026-03-16 13:18:16,930 === RUN PARAMETERS ===
+2026-03-16 13:18:16,930 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,931 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:18:16,931 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,932 dimensionality: 3+1D
+2026-03-16 13:18:16,932 rm_dir: True
+2026-03-16 13:18:16,933 n_epochs: 10
+2026-03-16 13:18:16,933 rnd_seed: 0
+2026-03-16 13:18:16,934 cuda_device: 0
+2026-03-16 13:18:16,934 patch_size: [61, 128, 128]
+2026-03-16 13:18:16,935 patch_interval: [1, 64, 64]
+2026-03-16 13:18:16,935 batch_size: 128
+2026-03-16 13:18:16,936 depth: 5
+2026-03-16 13:18:16,936 bc_channels: 64
+2026-03-16 13:18:16,936 obo_channels: [32, 16]
+2026-03-16 13:18:16,938 ll_channels: [64, 32, 16]
+2026-03-16 13:18:16,938 bs_size: [3, 3]
+2026-03-16 13:18:16,939 bp: False
+2026-03-16 13:18:16,939 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:18:16,940 lr: 5e-05
+2026-03-16 13:18:16,940 loss_coef: [0.5, 0.5]
+2026-03-16 13:18:16,941 use_amp: False
+2026-03-16 13:18:16,941 use_cpu: False
+2026-03-16 13:18:16,943 n_cpu: 8
+2026-03-16 13:18:16,943 prefetch_factor: 2
+2026-03-16 13:18:16,945 cuda: True
+2026-03-16 13:18:16,945 is_dir: True
+2026-03-16 13:18:16,947 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:18:16,947 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,948 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:18:16,948 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:18:16,950 log: <utils.log_methods.LogManager object at 0x7fffdab11640>
+2026-03-16 13:18:16,950 _logged_at: 2026-03-16T13:18:16.927618
+2026-03-16 13:18:16,962 Logged params
+2026-03-16 13:18:16,962 === RUN PARAMETERS ===
+2026-03-16 13:18:16,962 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,964 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:18:16,964 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,965 dimensionality: 3+1D
+2026-03-16 13:18:16,965 rm_dir: True
+2026-03-16 13:18:16,966 n_epochs: 10
+2026-03-16 13:18:16,966 rnd_seed: 0
+2026-03-16 13:18:16,966 cuda_device: 0
+2026-03-16 13:18:16,967 patch_size: [61, 128, 128]
+2026-03-16 13:18:16,968 patch_interval: [1, 64, 64]
+2026-03-16 13:18:16,969 batch_size: 128
+2026-03-16 13:18:16,969 depth: 5
+2026-03-16 13:18:16,970 bc_channels: 64
+2026-03-16 13:18:16,970 obo_channels: [32, 16]
+2026-03-16 13:18:16,970 ll_channels: [64, 32, 16]
+2026-03-16 13:18:16,971 bs_size: [3, 3]
+2026-03-16 13:18:16,971 bp: False
+2026-03-16 13:18:16,972 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:18:16,972 lr: 5e-05
+2026-03-16 13:18:16,974 loss_coef: [0.5, 0.5]
+2026-03-16 13:18:16,974 use_amp: False
+2026-03-16 13:18:16,975 use_cpu: False
+2026-03-16 13:18:16,975 n_cpu: 8
+2026-03-16 13:18:16,976 prefetch_factor: 2
+2026-03-16 13:18:16,976 cuda: True
+2026-03-16 13:18:16,976 is_dir: True
+2026-03-16 13:18:16,977 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:18:16,977 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:16,977 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:18:16,979 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:18:16,979 log: <utils.log_methods.LogManager object at 0x7fff08fcc430>
+2026-03-16 13:18:16,980 _logged_at: 2026-03-16T13:18:16.957444
+2026-03-16 13:18:41,102 Logged params
+2026-03-16 13:18:41,102 === RUN PARAMETERS ===
+2026-03-16 13:18:41,102 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,104 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:18:41,104 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,105 dimensionality: 3+1D
+2026-03-16 13:18:41,105 rm_dir: True
+2026-03-16 13:18:41,105 n_epochs: 10
+2026-03-16 13:18:41,106 rnd_seed: 0
+2026-03-16 13:18:41,106 cuda_device: 0
+2026-03-16 13:18:41,106 patch_size: [61, 128, 128]
+2026-03-16 13:18:41,107 patch_interval: [1, 64, 64]
+2026-03-16 13:18:41,108 batch_size: 128
+2026-03-16 13:18:41,108 depth: 5
+2026-03-16 13:18:41,108 bc_channels: 64
+2026-03-16 13:18:41,108 obo_channels: [32, 16]
+2026-03-16 13:18:41,109 ll_channels: [64, 32, 16]
+2026-03-16 13:18:41,109 bs_size: [3, 3]
+2026-03-16 13:18:41,109 bp: False
+2026-03-16 13:18:41,110 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:18:41,111 lr: 5e-05
+2026-03-16 13:18:41,111 loss_coef: [0.5, 0.5]
+2026-03-16 13:18:41,111 use_amp: False
+2026-03-16 13:18:41,112 use_cpu: False
+2026-03-16 13:18:41,112 n_cpu: 8
+2026-03-16 13:18:41,112 prefetch_factor: 2
+2026-03-16 13:18:41,113 cuda: True
+2026-03-16 13:18:41,114 is_dir: True
+2026-03-16 13:18:41,114 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:18:41,115 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,115 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:18:41,115 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:18:41,118 log: <utils.log_methods.LogManager object at 0x7fffdab27940>
+2026-03-16 13:18:41,118 _logged_at: 2026-03-16T13:18:41.099344
+2026-03-16 13:18:41,126 Logged params
+2026-03-16 13:18:41,126 === RUN PARAMETERS ===
+2026-03-16 13:18:41,126 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,126 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:18:41,127 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,128 dimensionality: 3+1D
+2026-03-16 13:18:41,128 rm_dir: True
+2026-03-16 13:18:41,128 n_epochs: 10
+2026-03-16 13:18:41,129 rnd_seed: 0
+2026-03-16 13:18:41,129 cuda_device: 0
+2026-03-16 13:18:41,129 patch_size: [61, 128, 128]
+2026-03-16 13:18:41,131 patch_interval: [1, 64, 64]
+2026-03-16 13:18:41,131 batch_size: 128
+2026-03-16 13:18:41,131 depth: 5
+2026-03-16 13:18:41,132 bc_channels: 64
+2026-03-16 13:18:41,133 obo_channels: [32, 16]
+2026-03-16 13:18:41,133 ll_channels: [64, 32, 16]
+2026-03-16 13:18:41,133 bs_size: [3, 3]
+2026-03-16 13:18:41,134 bp: False
+2026-03-16 13:18:41,134 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:18:41,134 lr: 5e-05
+2026-03-16 13:18:41,135 loss_coef: [0.5, 0.5]
+2026-03-16 13:18:41,136 use_amp: False
+2026-03-16 13:18:41,136 use_cpu: False
+2026-03-16 13:18:41,136 n_cpu: 8
+2026-03-16 13:18:41,137 prefetch_factor: 2
+2026-03-16 13:18:41,137 cuda: True
+2026-03-16 13:18:41,137 is_dir: True
+2026-03-16 13:18:41,137 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:18:41,138 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,138 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:18:41,138 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:18:41,138 log: <utils.log_methods.LogManager object at 0x7fffdab27940>
+2026-03-16 13:18:41,139 _logged_at: 2026-03-16T13:18:41.123576
+2026-03-16 13:18:41,148 Logged params
+2026-03-16 13:18:41,148 === RUN PARAMETERS ===
+2026-03-16 13:18:41,148 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,149 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:18:41,150 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,150 dimensionality: 3+1D
+2026-03-16 13:18:41,151 rm_dir: True
+2026-03-16 13:18:41,151 n_epochs: 10
+2026-03-16 13:18:41,152 rnd_seed: 0
+2026-03-16 13:18:41,152 cuda_device: 0
+2026-03-16 13:18:41,153 patch_size: [61, 128, 128]
+2026-03-16 13:18:41,153 patch_interval: [1, 64, 64]
+2026-03-16 13:18:41,154 batch_size: 128
+2026-03-16 13:18:41,154 depth: 5
+2026-03-16 13:18:41,155 bc_channels: 64
+2026-03-16 13:18:41,156 obo_channels: [32, 16]
+2026-03-16 13:18:41,157 ll_channels: [64, 32, 16]
+2026-03-16 13:18:41,157 bs_size: [3, 3]
+2026-03-16 13:18:41,158 bp: False
+2026-03-16 13:18:41,158 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:18:41,159 lr: 5e-05
+2026-03-16 13:18:41,159 loss_coef: [0.5, 0.5]
+2026-03-16 13:18:41,160 use_amp: False
+2026-03-16 13:18:41,160 use_cpu: False
+2026-03-16 13:18:41,161 n_cpu: 8
+2026-03-16 13:18:41,161 prefetch_factor: 2
+2026-03-16 13:18:41,162 cuda: True
+2026-03-16 13:18:41,162 is_dir: True
+2026-03-16 13:18:41,164 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:18:41,165 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:18:41,165 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:18:41,165 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:18:41,166 log: <utils.log_methods.LogManager object at 0x7fffda8d8370>
+2026-03-16 13:18:41,167 _logged_at: 2026-03-16T13:18:41.145371
+2026-03-16 13:20:55,070 Epoch 8: loss_total=65213.74306216033 l1=225.95163753343664 l2=130201.5343580163
+2026-03-16 13:23:12,034 Logged params
+2026-03-16 13:23:12,034 === RUN PARAMETERS ===
+2026-03-16 13:23:12,034 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,036 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:23:12,037 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,038 dimensionality: 3+1D
+2026-03-16 13:23:12,038 rm_dir: True
+2026-03-16 13:23:12,040 n_epochs: 4
+2026-03-16 13:23:12,040 rnd_seed: 0
+2026-03-16 13:23:12,041 cuda_device: 0
+2026-03-16 13:23:12,041 patch_size: [61, 128, 128]
+2026-03-16 13:23:12,042 patch_interval: [1, 64, 64]
+2026-03-16 13:23:12,044 batch_size: 512
+2026-03-16 13:23:12,045 depth: 5
+2026-03-16 13:23:12,045 bc_channels: 64
+2026-03-16 13:23:12,047 obo_channels: [32, 16]
+2026-03-16 13:23:12,048 ll_channels: [64, 32, 16]
+2026-03-16 13:23:12,049 bs_size: [3, 3]
+2026-03-16 13:23:12,050 bp: False
+2026-03-16 13:23:12,051 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:23:12,051 lr: 5e-05
+2026-03-16 13:23:12,052 loss_coef: [0.5, 0.5]
+2026-03-16 13:23:12,052 use_amp: False
+2026-03-16 13:23:12,054 use_cpu: False
+2026-03-16 13:23:12,054 n_cpu: 8
+2026-03-16 13:23:12,055 prefetch_factor: 6
+2026-03-16 13:23:12,055 cuda: True
+2026-03-16 13:23:12,056 is_dir: True
+2026-03-16 13:23:12,056 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:23:12,058 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,058 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:23:12,059 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:23:12,059 log: <utils.log_methods.LogManager object at 0x7fffda9ce700>
+2026-03-16 13:23:12,060 _logged_at: 2026-03-16T13:23:12.028982
+2026-03-16 13:23:12,068 Logged params
+2026-03-16 13:23:12,068 === RUN PARAMETERS ===
+2026-03-16 13:23:12,068 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,068 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:23:12,070 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,070 dimensionality: 3+1D
+2026-03-16 13:23:12,071 rm_dir: True
+2026-03-16 13:23:12,072 n_epochs: 4
+2026-03-16 13:23:12,074 rnd_seed: 0
+2026-03-16 13:23:12,075 cuda_device: 0
+2026-03-16 13:23:12,076 patch_size: [61, 128, 128]
+2026-03-16 13:23:12,078 patch_interval: [1, 64, 64]
+2026-03-16 13:23:12,078 batch_size: 512
+2026-03-16 13:23:12,080 depth: 5
+2026-03-16 13:23:12,080 bc_channels: 64
+2026-03-16 13:23:12,080 obo_channels: [32, 16]
+2026-03-16 13:23:12,081 ll_channels: [64, 32, 16]
+2026-03-16 13:23:12,081 bs_size: [3, 3]
+2026-03-16 13:23:12,081 bp: False
+2026-03-16 13:23:12,082 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:23:12,082 lr: 5e-05
+2026-03-16 13:23:12,082 loss_coef: [0.5, 0.5]
+2026-03-16 13:23:12,083 use_amp: False
+2026-03-16 13:23:12,083 use_cpu: False
+2026-03-16 13:23:12,083 n_cpu: 8
+2026-03-16 13:23:12,085 prefetch_factor: 6
+2026-03-16 13:23:12,085 cuda: True
+2026-03-16 13:23:12,086 is_dir: True
+2026-03-16 13:23:12,086 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:23:12,086 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,087 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:23:12,087 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:23:12,088 log: <utils.log_methods.LogManager object at 0x7fffda9ce700>
+2026-03-16 13:23:12,088 _logged_at: 2026-03-16T13:23:12.064596
+2026-03-16 13:23:12,096 Logged params
+2026-03-16 13:23:12,096 === RUN PARAMETERS ===
+2026-03-16 13:23:12,097 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,098 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:23:12,099 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,100 dimensionality: 3+1D
+2026-03-16 13:23:12,101 rm_dir: True
+2026-03-16 13:23:12,102 n_epochs: 4
+2026-03-16 13:23:12,103 rnd_seed: 0
+2026-03-16 13:23:12,104 cuda_device: 0
+2026-03-16 13:23:12,104 patch_size: [61, 128, 128]
+2026-03-16 13:23:12,105 patch_interval: [1, 64, 64]
+2026-03-16 13:23:12,105 batch_size: 512
+2026-03-16 13:23:12,106 depth: 5
+2026-03-16 13:23:12,106 bc_channels: 64
+2026-03-16 13:23:12,107 obo_channels: [32, 16]
+2026-03-16 13:23:12,108 ll_channels: [64, 32, 16]
+2026-03-16 13:23:12,110 bs_size: [3, 3]
+2026-03-16 13:23:12,111 bp: False
+2026-03-16 13:23:12,111 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:23:12,112 lr: 5e-05
+2026-03-16 13:23:12,113 loss_coef: [0.5, 0.5]
+2026-03-16 13:23:12,115 use_amp: False
+2026-03-16 13:23:12,116 use_cpu: False
+2026-03-16 13:23:12,117 n_cpu: 8
+2026-03-16 13:23:12,117 prefetch_factor: 6
+2026-03-16 13:23:12,118 cuda: True
+2026-03-16 13:23:12,118 is_dir: True
+2026-03-16 13:23:12,119 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:23:12,119 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:12,120 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:23:12,120 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:23:12,122 log: <utils.log_methods.LogManager object at 0x7fffdb37dd90>
+2026-03-16 13:23:12,122 _logged_at: 2026-03-16T13:23:12.093190
+2026-03-16 13:23:35,417 Logged params
+2026-03-16 13:23:35,418 === RUN PARAMETERS ===
+2026-03-16 13:23:35,418 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,419 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:23:35,419 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,420 dimensionality: 3+1D
+2026-03-16 13:23:35,420 rm_dir: True
+2026-03-16 13:23:35,420 n_epochs: 4
+2026-03-16 13:23:35,420 rnd_seed: 0
+2026-03-16 13:23:35,421 cuda_device: 0
+2026-03-16 13:23:35,421 patch_size: [61, 128, 128]
+2026-03-16 13:23:35,422 patch_interval: [1, 64, 64]
+2026-03-16 13:23:35,422 batch_size: 512
+2026-03-16 13:23:35,423 depth: 5
+2026-03-16 13:23:35,423 bc_channels: 64
+2026-03-16 13:23:35,424 obo_channels: [32, 16]
+2026-03-16 13:23:35,424 ll_channels: [64, 32, 16]
+2026-03-16 13:23:35,425 bs_size: [3, 3]
+2026-03-16 13:23:35,425 bp: False
+2026-03-16 13:23:35,426 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:23:35,426 lr: 5e-05
+2026-03-16 13:23:35,427 loss_coef: [0.5, 0.5]
+2026-03-16 13:23:35,427 use_amp: False
+2026-03-16 13:23:35,427 use_cpu: False
+2026-03-16 13:23:35,427 n_cpu: 8
+2026-03-16 13:23:35,429 prefetch_factor: 2
+2026-03-16 13:23:35,429 cuda: True
+2026-03-16 13:23:35,430 is_dir: True
+2026-03-16 13:23:35,430 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:23:35,431 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,431 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:23:35,432 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:23:35,432 log: <utils.log_methods.LogManager object at 0x7fffda97bfa0>
+2026-03-16 13:23:35,433 _logged_at: 2026-03-16T13:23:35.413724
+2026-03-16 13:23:35,440 Logged params
+2026-03-16 13:23:35,440 === RUN PARAMETERS ===
+2026-03-16 13:23:35,440 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,441 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:23:35,441 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,442 dimensionality: 3+1D
+2026-03-16 13:23:35,442 rm_dir: True
+2026-03-16 13:23:35,443 n_epochs: 4
+2026-03-16 13:23:35,443 rnd_seed: 0
+2026-03-16 13:23:35,444 cuda_device: 0
+2026-03-16 13:23:35,444 patch_size: [61, 128, 128]
+2026-03-16 13:23:35,445 patch_interval: [1, 64, 64]
+2026-03-16 13:23:35,445 batch_size: 512
+2026-03-16 13:23:35,446 depth: 5
+2026-03-16 13:23:35,446 bc_channels: 64
+2026-03-16 13:23:35,447 obo_channels: [32, 16]
+2026-03-16 13:23:35,447 ll_channels: [64, 32, 16]
+2026-03-16 13:23:35,448 bs_size: [3, 3]
+2026-03-16 13:23:35,449 bp: False
+2026-03-16 13:23:35,450 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:23:35,450 lr: 5e-05
+2026-03-16 13:23:35,450 loss_coef: [0.5, 0.5]
+2026-03-16 13:23:35,450 use_amp: False
+2026-03-16 13:23:35,451 use_cpu: False
+2026-03-16 13:23:35,451 n_cpu: 8
+2026-03-16 13:23:35,452 prefetch_factor: 2
+2026-03-16 13:23:35,452 cuda: True
+2026-03-16 13:23:35,453 is_dir: True
+2026-03-16 13:23:35,454 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:23:35,454 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,455 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:23:35,455 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:23:35,456 log: <utils.log_methods.LogManager object at 0x7fffda97bfa0>
+2026-03-16 13:23:35,457 _logged_at: 2026-03-16T13:23:35.437928
+2026-03-16 13:23:35,466 Logged params
+2026-03-16 13:23:35,466 === RUN PARAMETERS ===
+2026-03-16 13:23:35,466 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,467 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:23:35,468 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,468 dimensionality: 3+1D
+2026-03-16 13:23:35,469 rm_dir: True
+2026-03-16 13:23:35,469 n_epochs: 4
+2026-03-16 13:23:35,470 rnd_seed: 0
+2026-03-16 13:23:35,470 cuda_device: 0
+2026-03-16 13:23:35,471 patch_size: [61, 128, 128]
+2026-03-16 13:23:35,471 patch_interval: [1, 64, 64]
+2026-03-16 13:23:35,472 batch_size: 512
+2026-03-16 13:23:35,472 depth: 5
+2026-03-16 13:23:35,473 bc_channels: 64
+2026-03-16 13:23:35,473 obo_channels: [32, 16]
+2026-03-16 13:23:35,474 ll_channels: [64, 32, 16]
+2026-03-16 13:23:35,475 bs_size: [3, 3]
+2026-03-16 13:23:35,475 bp: False
+2026-03-16 13:23:35,476 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:23:35,476 lr: 5e-05
+2026-03-16 13:23:35,477 loss_coef: [0.5, 0.5]
+2026-03-16 13:23:35,477 use_amp: False
+2026-03-16 13:23:35,478 use_cpu: False
+2026-03-16 13:23:35,478 n_cpu: 8
+2026-03-16 13:23:35,479 prefetch_factor: 2
+2026-03-16 13:23:35,479 cuda: True
+2026-03-16 13:23:35,480 is_dir: True
+2026-03-16 13:23:35,480 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:23:35,480 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:23:35,480 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:23:35,481 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:23:35,481 log: <utils.log_methods.LogManager object at 0x7fff08fcd3d0>
+2026-03-16 13:23:35,482 _logged_at: 2026-03-16T13:23:35.464408
+2026-03-16 13:24:30,947 Logged params
+2026-03-16 13:24:30,947 === RUN PARAMETERS ===
+2026-03-16 13:24:30,947 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:30,947 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:24:30,947 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:30,948 dimensionality: 3+1D
+2026-03-16 13:24:30,949 rm_dir: True
+2026-03-16 13:24:30,949 n_epochs: 4
+2026-03-16 13:24:30,954 rnd_seed: 0
+2026-03-16 13:24:30,958 cuda_device: 0
+2026-03-16 13:24:30,958 patch_size: [61, 128, 128]
+2026-03-16 13:24:30,958 patch_interval: [1, 64, 64]
+2026-03-16 13:24:30,958 batch_size: 256
+2026-03-16 13:24:30,958 depth: 5
+2026-03-16 13:24:30,958 bc_channels: 64
+2026-03-16 13:24:30,962 obo_channels: [32, 16]
+2026-03-16 13:24:30,963 ll_channels: [64, 32, 16]
+2026-03-16 13:24:30,963 bs_size: [3, 3]
+2026-03-16 13:24:30,963 bp: False
+2026-03-16 13:24:30,965 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:24:30,966 lr: 0.0005
+2026-03-16 13:24:30,966 loss_coef: [0.5, 0.5]
+2026-03-16 13:24:30,966 use_amp: False
+2026-03-16 13:24:30,969 use_cpu: False
+2026-03-16 13:24:30,977 n_cpu: 8
+2026-03-16 13:24:30,978 prefetch_factor: 2
+2026-03-16 13:24:30,978 cuda: True
+2026-03-16 13:24:30,978 is_dir: True
+2026-03-16 13:24:30,978 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:24:30,978 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:30,978 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:24:30,979 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:24:30,980 log: <utils.log_methods.LogManager object at 0x7fffdaa0a6a0>
+2026-03-16 13:24:30,980 _logged_at: 2026-03-16T13:24:30.937430
+2026-03-16 13:24:30,987 Logged params
+2026-03-16 13:24:30,987 === RUN PARAMETERS ===
+2026-03-16 13:24:30,987 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:30,987 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:24:30,987 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:30,988 dimensionality: 3+1D
+2026-03-16 13:24:30,988 rm_dir: True
+2026-03-16 13:24:30,988 n_epochs: 4
+2026-03-16 13:24:30,989 rnd_seed: 0
+2026-03-16 13:24:30,989 cuda_device: 0
+2026-03-16 13:24:30,989 patch_size: [61, 128, 128]
+2026-03-16 13:24:30,989 patch_interval: [1, 64, 64]
+2026-03-16 13:24:30,990 batch_size: 256
+2026-03-16 13:24:30,990 depth: 5
+2026-03-16 13:24:30,990 bc_channels: 64
+2026-03-16 13:24:30,990 obo_channels: [32, 16]
+2026-03-16 13:24:30,990 ll_channels: [64, 32, 16]
+2026-03-16 13:24:30,991 bs_size: [3, 3]
+2026-03-16 13:24:30,991 bp: False
+2026-03-16 13:24:30,991 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:24:30,991 lr: 0.0005
+2026-03-16 13:24:30,992 loss_coef: [0.5, 0.5]
+2026-03-16 13:24:30,992 use_amp: False
+2026-03-16 13:24:30,993 use_cpu: False
+2026-03-16 13:24:30,993 n_cpu: 8
+2026-03-16 13:24:30,993 prefetch_factor: 2
+2026-03-16 13:24:30,994 cuda: True
+2026-03-16 13:24:30,994 is_dir: True
+2026-03-16 13:24:30,994 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:24:30,995 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:30,995 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:24:30,995 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:24:30,995 log: <utils.log_methods.LogManager object at 0x7fffdaa0a6a0>
+2026-03-16 13:24:30,996 _logged_at: 2026-03-16T13:24:30.984498
+2026-03-16 13:24:31,003 Logged params
+2026-03-16 13:24:31,003 === RUN PARAMETERS ===
+2026-03-16 13:24:31,003 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:31,003 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:24:31,005 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:31,005 dimensionality: 3+1D
+2026-03-16 13:24:31,005 rm_dir: True
+2026-03-16 13:24:31,005 n_epochs: 4
+2026-03-16 13:24:31,006 rnd_seed: 0
+2026-03-16 13:24:31,006 cuda_device: 0
+2026-03-16 13:24:31,006 patch_size: [61, 128, 128]
+2026-03-16 13:24:31,007 patch_interval: [1, 64, 64]
+2026-03-16 13:24:31,007 batch_size: 256
+2026-03-16 13:24:31,007 depth: 5
+2026-03-16 13:24:31,007 bc_channels: 64
+2026-03-16 13:24:31,008 obo_channels: [32, 16]
+2026-03-16 13:24:31,008 ll_channels: [64, 32, 16]
+2026-03-16 13:24:31,008 bs_size: [3, 3]
+2026-03-16 13:24:31,009 bp: False
+2026-03-16 13:24:31,009 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:24:31,009 lr: 0.0005
+2026-03-16 13:24:31,009 loss_coef: [0.5, 0.5]
+2026-03-16 13:24:31,011 use_amp: False
+2026-03-16 13:24:31,013 use_cpu: False
+2026-03-16 13:24:31,013 n_cpu: 8
+2026-03-16 13:24:31,013 prefetch_factor: 2
+2026-03-16 13:24:31,013 cuda: True
+2026-03-16 13:24:31,014 is_dir: True
+2026-03-16 13:24:31,014 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:24:31,014 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:24:31,014 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:24:31,015 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:24:31,015 log: <utils.log_methods.LogManager object at 0x7fffdab160d0>
+2026-03-16 13:24:31,015 _logged_at: 2026-03-16T13:24:31.000793
+2026-03-16 13:26:59,409 Epoch 0: loss_total=67369.08430706522 l1=224.0397611535114 l2=134514.1289402174
+2026-03-16 13:29:20,361 Epoch 1: loss_total=65313.60130774457 l1=226.05184929889182 l2=130401.15078125
+2026-03-16 13:31:40,798 Epoch 2: loss_total=65196.213671875 l1=225.79294778575067 l2=130166.634375
+2026-03-16 13:34:00,798 Epoch 3: loss_total=65217.58031589674 l1=225.8367440265158 l2=130209.32353940218
+2026-03-16 13:39:27,244 Logged params
+2026-03-16 13:39:27,244 === RUN PARAMETERS ===
+2026-03-16 13:39:27,244 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:39:27,266 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:39:27,273 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:39:27,274 dimensionality: 3+1D
+2026-03-16 13:39:27,276 rm_dir: True
+2026-03-16 13:39:27,277 n_epochs: 4
+2026-03-16 13:39:27,278 rnd_seed: 0
+2026-03-16 13:39:27,280 cuda_device: 0
+2026-03-16 13:39:27,282 patch_size: [61, 128, 128]
+2026-03-16 13:39:27,300 patch_interval: [1, 64, 64]
+2026-03-16 13:39:27,303 batch_size: 256
+2026-03-16 13:39:27,303 depth: 5
+2026-03-16 13:39:27,304 bc_channels: 64
+2026-03-16 13:39:27,305 obo_channels: [32, 16]
+2026-03-16 13:39:27,307 ll_channels: [64, 32, 16]
+2026-03-16 13:39:27,307 bs_size: [3, 3]
+2026-03-16 13:39:27,309 bp: False
+2026-03-16 13:39:27,310 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:39:27,310 lr: 0.0005
+2026-03-16 13:39:27,311 loss_coef: [0.5, 0.5]
+2026-03-16 13:39:27,311 use_amp: False
+2026-03-16 13:39:27,313 use_cpu: False
+2026-03-16 13:39:27,315 n_cpu: 8
+2026-03-16 13:39:27,317 prefetch_factor: 2
+2026-03-16 13:39:27,317 cuda: True
+2026-03-16 13:39:27,318 is_dir: True
+2026-03-16 13:39:27,318 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:39:27,319 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:39:27,321 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:39:27,322 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:39:27,323 log: <utils.log_methods.LogManager object at 0x7fffda979e20>
+2026-03-16 13:39:27,324 _logged_at: 2026-03-16T13:39:27.225507
+2026-03-16 13:43:28,429 Logged params
+2026-03-16 13:43:28,429 === RUN PARAMETERS ===
+2026-03-16 13:43:28,429 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:43:28,430 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:43:28,430 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:43:28,431 dimensionality: 3+1D
+2026-03-16 13:43:28,431 rm_dir: True
+2026-03-16 13:43:28,432 n_epochs: 4
+2026-03-16 13:43:28,432 rnd_seed: 0
+2026-03-16 13:43:28,433 cuda_device: 0
+2026-03-16 13:43:28,433 patch_size: [61, 128, 128]
+2026-03-16 13:43:28,434 patch_interval: [1, 64, 64]
+2026-03-16 13:43:28,434 batch_size: 256
+2026-03-16 13:43:28,435 depth: 5
+2026-03-16 13:43:28,435 bc_channels: 64
+2026-03-16 13:43:28,436 obo_channels: [32, 16]
+2026-03-16 13:43:28,436 ll_channels: [64, 32, 16]
+2026-03-16 13:43:28,437 bs_size: [3, 3]
+2026-03-16 13:43:28,437 bp: False
+2026-03-16 13:43:28,438 unet_channels: [64, 128, 256, 512, 1024]
+2026-03-16 13:43:28,438 lr: 0.0005
+2026-03-16 13:43:28,439 loss_coef: [0.5, 0.5]
+2026-03-16 13:43:28,439 use_amp: False
+2026-03-16 13:43:28,440 use_cpu: False
+2026-03-16 13:43:28,440 n_cpu: 8
+2026-03-16 13:43:28,441 prefetch_factor: 2
+2026-03-16 13:43:28,441 cuda: True
+2026-03-16 13:43:28,442 is_dir: True
+2026-03-16 13:43:28,442 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:43:28,443 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:43:28,443 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:43:28,444 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:43:28,444 log: <utils.log_methods.LogManager object at 0x7fffda75fe80>
+2026-03-16 13:43:28,444 _logged_at: 2026-03-16T13:43:28.426225
+2026-03-16 13:46:56,113 Logged params
+2026-03-16 13:46:56,113 === RUN PARAMETERS ===
+2026-03-16 13:46:56,113 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,114 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:46:56,115 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,116 dimensionality: 3+1D
+2026-03-16 13:46:56,116 rm_dir: True
+2026-03-16 13:46:56,116 n_epochs: 4
+2026-03-16 13:46:56,116 rnd_seed: 0
+2026-03-16 13:46:56,117 cuda_device: 0
+2026-03-16 13:46:56,117 patch_size: [61, 128, 128]
+2026-03-16 13:46:56,118 patch_interval: [1, 64, 64]
+2026-03-16 13:46:56,118 batch_size: 256
+2026-03-16 13:46:56,119 depth: 5
+2026-03-16 13:46:56,119 bc_channels: 64
+2026-03-16 13:46:56,120 obo_channels: [32, 16]
+2026-03-16 13:46:56,120 ll_channels: [64, 32, 16]
+2026-03-16 13:46:56,121 bs_size: [3, 3]
+2026-03-16 13:46:56,121 bp: False
+2026-03-16 13:46:56,122 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 13:46:56,122 lr: 0.0005
+2026-03-16 13:46:56,123 loss_coef: [0.5, 0.5]
+2026-03-16 13:46:56,123 use_amp: False
+2026-03-16 13:46:56,124 use_cpu: False
+2026-03-16 13:46:56,124 n_cpu: 8
+2026-03-16 13:46:56,125 prefetch_factor: 2
+2026-03-16 13:46:56,125 cuda: True
+2026-03-16 13:46:56,126 is_dir: True
+2026-03-16 13:46:56,126 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:46:56,126 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,127 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:46:56,128 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:46:56,128 log: <utils.log_methods.LogManager object at 0x7fff08fe6a00>
+2026-03-16 13:46:56,129 _logged_at: 2026-03-16T13:46:56.110390
+2026-03-16 13:46:56,138 Logged params
+2026-03-16 13:46:56,138 === RUN PARAMETERS ===
+2026-03-16 13:46:56,138 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,139 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:46:56,139 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,140 dimensionality: 3+1D
+2026-03-16 13:46:56,140 rm_dir: True
+2026-03-16 13:46:56,141 n_epochs: 4
+2026-03-16 13:46:56,141 rnd_seed: 0
+2026-03-16 13:46:56,142 cuda_device: 0
+2026-03-16 13:46:56,142 patch_size: [61, 128, 128]
+2026-03-16 13:46:56,143 patch_interval: [1, 64, 64]
+2026-03-16 13:46:56,143 batch_size: 256
+2026-03-16 13:46:56,144 depth: 5
+2026-03-16 13:46:56,144 bc_channels: 64
+2026-03-16 13:46:56,145 obo_channels: [32, 16]
+2026-03-16 13:46:56,145 ll_channels: [64, 32, 16]
+2026-03-16 13:46:56,146 bs_size: [3, 3]
+2026-03-16 13:46:56,146 bp: False
+2026-03-16 13:46:56,147 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 13:46:56,147 lr: 0.0005
+2026-03-16 13:46:56,148 loss_coef: [0.5, 0.5]
+2026-03-16 13:46:56,148 use_amp: False
+2026-03-16 13:46:56,149 use_cpu: False
+2026-03-16 13:46:56,149 n_cpu: 8
+2026-03-16 13:46:56,150 prefetch_factor: 2
+2026-03-16 13:46:56,150 cuda: True
+2026-03-16 13:46:56,150 is_dir: True
+2026-03-16 13:46:56,151 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:46:56,151 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,151 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:46:56,152 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:46:56,153 log: <utils.log_methods.LogManager object at 0x7fff08fe6a00>
+2026-03-16 13:46:56,153 _logged_at: 2026-03-16T13:46:56.134641
+2026-03-16 13:46:56,161 Logged params
+2026-03-16 13:46:56,161 === RUN PARAMETERS ===
+2026-03-16 13:46:56,161 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,162 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:46:56,162 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,162 dimensionality: 3+1D
+2026-03-16 13:46:56,163 rm_dir: True
+2026-03-16 13:46:56,163 n_epochs: 4
+2026-03-16 13:46:56,164 rnd_seed: 0
+2026-03-16 13:46:56,164 cuda_device: 0
+2026-03-16 13:46:56,165 patch_size: [61, 128, 128]
+2026-03-16 13:46:56,165 patch_interval: [1, 64, 64]
+2026-03-16 13:46:56,165 batch_size: 256
+2026-03-16 13:46:56,166 depth: 5
+2026-03-16 13:46:56,166 bc_channels: 64
+2026-03-16 13:46:56,166 obo_channels: [32, 16]
+2026-03-16 13:46:56,167 ll_channels: [64, 32, 16]
+2026-03-16 13:46:56,167 bs_size: [3, 3]
+2026-03-16 13:46:56,168 bp: False
+2026-03-16 13:46:56,168 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 13:46:56,168 lr: 0.0005
+2026-03-16 13:46:56,168 loss_coef: [0.5, 0.5]
+2026-03-16 13:46:56,169 use_amp: False
+2026-03-16 13:46:56,169 use_cpu: False
+2026-03-16 13:46:56,170 n_cpu: 8
+2026-03-16 13:46:56,170 prefetch_factor: 2
+2026-03-16 13:46:56,171 cuda: True
+2026-03-16 13:46:56,171 is_dir: True
+2026-03-16 13:46:56,171 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:46:56,172 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:46:56,172 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:46:56,172 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:46:56,173 log: <utils.log_methods.LogManager object at 0x7fff08fe6be0>
+2026-03-16 13:46:56,173 _logged_at: 2026-03-16T13:46:56.158507
+2026-03-16 13:47:26,227 Logged params
+2026-03-16 13:47:26,227 === RUN PARAMETERS ===
+2026-03-16 13:47:26,227 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,228 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:47:26,228 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,229 dimensionality: 3+1D
+2026-03-16 13:47:26,229 rm_dir: True
+2026-03-16 13:47:26,229 n_epochs: 4
+2026-03-16 13:47:26,229 rnd_seed: 0
+2026-03-16 13:47:26,230 cuda_device: 0
+2026-03-16 13:47:26,230 patch_size: [61, 128, 128]
+2026-03-16 13:47:26,231 patch_interval: [1, 64, 64]
+2026-03-16 13:47:26,231 batch_size: 128
+2026-03-16 13:47:26,232 depth: 5
+2026-03-16 13:47:26,232 bc_channels: 64
+2026-03-16 13:47:26,233 obo_channels: [32, 16]
+2026-03-16 13:47:26,233 ll_channels: [64, 32, 16]
+2026-03-16 13:47:26,234 bs_size: [3, 3]
+2026-03-16 13:47:26,234 bp: False
+2026-03-16 13:47:26,235 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 13:47:26,235 lr: 0.0005
+2026-03-16 13:47:26,236 loss_coef: [0.5, 0.5]
+2026-03-16 13:47:26,236 use_amp: False
+2026-03-16 13:47:26,237 use_cpu: False
+2026-03-16 13:47:26,237 n_cpu: 8
+2026-03-16 13:47:26,238 prefetch_factor: 2
+2026-03-16 13:47:26,238 cuda: True
+2026-03-16 13:47:26,239 is_dir: True
+2026-03-16 13:47:26,239 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:47:26,239 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,240 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:47:26,240 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:47:26,240 log: <utils.log_methods.LogManager object at 0x7fffdab27e80>
+2026-03-16 13:47:26,241 _logged_at: 2026-03-16T13:47:26.224433
+2026-03-16 13:47:26,248 Logged params
+2026-03-16 13:47:26,248 === RUN PARAMETERS ===
+2026-03-16 13:47:26,248 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,249 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:47:26,250 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,251 dimensionality: 3+1D
+2026-03-16 13:47:26,251 rm_dir: True
+2026-03-16 13:47:26,252 n_epochs: 4
+2026-03-16 13:47:26,252 rnd_seed: 0
+2026-03-16 13:47:26,253 cuda_device: 0
+2026-03-16 13:47:26,253 patch_size: [61, 128, 128]
+2026-03-16 13:47:26,253 patch_interval: [1, 64, 64]
+2026-03-16 13:47:26,253 batch_size: 128
+2026-03-16 13:47:26,254 depth: 5
+2026-03-16 13:47:26,254 bc_channels: 64
+2026-03-16 13:47:26,255 obo_channels: [32, 16]
+2026-03-16 13:47:26,255 ll_channels: [64, 32, 16]
+2026-03-16 13:47:26,256 bs_size: [3, 3]
+2026-03-16 13:47:26,256 bp: False
+2026-03-16 13:47:26,257 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 13:47:26,257 lr: 0.0005
+2026-03-16 13:47:26,258 loss_coef: [0.5, 0.5]
+2026-03-16 13:47:26,258 use_amp: False
+2026-03-16 13:47:26,259 use_cpu: False
+2026-03-16 13:47:26,259 n_cpu: 8
+2026-03-16 13:47:26,260 prefetch_factor: 2
+2026-03-16 13:47:26,260 cuda: True
+2026-03-16 13:47:26,261 is_dir: True
+2026-03-16 13:47:26,261 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:47:26,262 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,262 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:47:26,262 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:47:26,262 log: <utils.log_methods.LogManager object at 0x7fffdab27e80>
+2026-03-16 13:47:26,263 _logged_at: 2026-03-16T13:47:26.245501
+2026-03-16 13:47:26,271 Logged params
+2026-03-16 13:47:26,271 === RUN PARAMETERS ===
+2026-03-16 13:47:26,271 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,272 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 13:47:26,272 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,273 dimensionality: 3+1D
+2026-03-16 13:47:26,273 rm_dir: True
+2026-03-16 13:47:26,274 n_epochs: 4
+2026-03-16 13:47:26,274 rnd_seed: 0
+2026-03-16 13:47:26,275 cuda_device: 0
+2026-03-16 13:47:26,275 patch_size: [61, 128, 128]
+2026-03-16 13:47:26,276 patch_interval: [1, 64, 64]
+2026-03-16 13:47:26,276 batch_size: 128
+2026-03-16 13:47:26,277 depth: 5
+2026-03-16 13:47:26,277 bc_channels: 64
+2026-03-16 13:47:26,278 obo_channels: [32, 16]
+2026-03-16 13:47:26,278 ll_channels: [64, 32, 16]
+2026-03-16 13:47:26,278 bs_size: [3, 3]
+2026-03-16 13:47:26,279 bp: False
+2026-03-16 13:47:26,279 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 13:47:26,279 lr: 0.0005
+2026-03-16 13:47:26,280 loss_coef: [0.5, 0.5]
+2026-03-16 13:47:26,280 use_amp: False
+2026-03-16 13:47:26,281 use_cpu: False
+2026-03-16 13:47:26,281 n_cpu: 8
+2026-03-16 13:47:26,282 prefetch_factor: 2
+2026-03-16 13:47:26,282 cuda: True
+2026-03-16 13:47:26,283 is_dir: True
+2026-03-16 13:47:26,283 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 13:47:26,283 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 13:47:26,284 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 13:47:26,284 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 13:47:26,285 log: <utils.log_methods.LogManager object at 0x7fff08fcb520>
+2026-03-16 13:47:26,285 _logged_at: 2026-03-16T13:47:26.268857
+2026-03-16 13:57:01,333 Epoch 0: loss_total=79351.90828804347 l1=231.37771357660708 l2=158472.4394701087
+2026-03-16 14:06:32,002 Epoch 1: loss_total=65370.475390625 l1=226.2144204844599 l2=130514.73639605979
+2026-03-16 14:16:01,903 Epoch 2: loss_total=65201.59033627717 l1=225.84040427829908 l2=130177.34014945652
+2026-03-16 14:25:32,284 Epoch 3: loss_total=65211.903914741844 l1=225.82593035490618 l2=130197.98194633152
+2026-03-16 15:59:25,638 Logged params
+2026-03-16 15:59:25,638 === RUN PARAMETERS ===
+2026-03-16 15:59:25,638 in_path: /data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 15:59:25,640 out_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs
+2026-03-16 15:59:25,640 exp_name: CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 15:59:25,640 dimensionality: 3+1D
+2026-03-16 15:59:25,640 rm_dir: True
+2026-03-16 15:59:25,641 n_epochs: 4
+2026-03-16 15:59:25,641 rnd_seed: 0
+2026-03-16 15:59:25,643 cuda_device: 0
+2026-03-16 15:59:25,643 patch_size: [61, 128, 128]
+2026-03-16 15:59:25,644 patch_interval: [1, 64, 64]
+2026-03-16 15:59:25,644 batch_size: 128
+2026-03-16 15:59:25,645 depth: 5
+2026-03-16 15:59:25,645 bc_channels: 64
+2026-03-16 15:59:25,646 obo_channels: [32, 16]
+2026-03-16 15:59:25,646 ll_channels: [64, 32, 16]
+2026-03-16 15:59:25,647 bs_size: [3, 3]
+2026-03-16 15:59:25,647 bp: False
+2026-03-16 15:59:25,648 unet_channels: [256, 512, 1024, 2048, 4096]
+2026-03-16 15:59:25,648 lr: 0.0005
+2026-03-16 15:59:25,649 loss_coef: [0.5, 0.5]
+2026-03-16 15:59:25,649 use_amp: False
+2026-03-16 15:59:25,650 use_cpu: False
+2026-03-16 15:59:25,650 n_cpu: 8
+2026-03-16 15:59:25,651 prefetch_factor: 2
+2026-03-16 15:59:25,651 cuda: True
+2026-03-16 15:59:25,652 is_dir: True
+2026-03-16 15:59:25,652 cwd: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks
+2026-03-16 15:59:25,654 tmp_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT
+2026-03-16 15:59:25,654 pth_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth
+2026-03-16 15:59:25,655 onnx_dir: /vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx
+2026-03-16 15:59:25,655 log: <utils.log_methods.LogManager object at 0x7fffda8d63d0>
+2026-03-16 15:59:25,656 _logged_at: 2026-03-16T15:59:25.634746

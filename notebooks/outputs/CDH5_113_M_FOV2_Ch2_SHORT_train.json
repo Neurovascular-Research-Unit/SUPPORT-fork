@@ -1,0 +1,184 @@
+{
+  "params": {
+    "in_path": "/data/garfinkeljb/CloudCode/data_noisy/CDH5_113_M_FOV2_Ch2_SHORT",
+    "out_dir": "/vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/outputs",
+    "exp_name": "CDH5_113_M_FOV2_Ch2_SHORT",
+    "dimensionality": "3+1D",
+    "rm_dir": true,
+    "n_epochs": 4,
+    "rnd_seed": 0,
+    "cuda_device": "0",
+    "patch_size": [
+      61,
+      128,
+      128
+    ],
+    "patch_interval": [
+      1,
+      64,
+      64
+    ],
+    "batch_size": 128,
+    "depth": 5,
+    "bc_channels": 64,
+    "obo_channels": [
+      32,
+      16
+    ],
+    "ll_channels": [
+      64,
+      32,
+      16
+    ],
+    "bs_size": [
+      3,
+      3
+    ],
+    "bp": false,
+    "unet_channels": [
+      256,
+      512,
+      1024,
+      2048,
+      4096
+    ],
+    "lr": 0.0005,
+    "loss_coef": [
+      0.5,
+      0.5
+    ],
+    "use_amp": false,
+    "use_cpu": false,
+    "n_cpu": 8,
+    "prefetch_factor": 2,
+    "cuda": true,
+    "is_dir": true,
+    "cwd": "/vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks",
+    "tmp_dir": "/vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT",
+    "pth_dir": "/vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/pth",
+    "onnx_dir": "/vf/users/garfinkeljb/CloudCode/SUPPORT/notebooks/tmp/CDH5_113_M_FOV2_Ch2_SHORT/onnx",
+    "log": "<utils.log_methods.LogManager object at 0x7fffda8d63d0>",
+    "_logged_at": "2026-03-16T15:59:25.634746"
+  },
+  "losses": [
+    {
+      "epoch": 0,
+      "time": "2026-03-16T12:57:12.501437",
+      "loss_total": 66768.41491168478,
+      "loss_l1": 224.1193079077679,
+      "loss_l2": 133312.7104959239
+    },
+    {
+      "epoch": 1,
+      "time": "2026-03-16T12:59:33.787645",
+      "loss_total": 65408.44312160326,
+      "loss_l1": 226.44087103138799,
+      "loss_l2": 130590.44527853261
+    },
+    {
+      "epoch": 2,
+      "time": "2026-03-16T13:01:55.158097",
+      "loss_total": 65258.42762398098,
+      "loss_l1": 226.0021139725395,
+      "loss_l2": 130290.85324388587
+    },
+    {
+      "epoch": 3,
+      "time": "2026-03-16T13:04:16.737741",
+      "loss_total": 65268.241431725546,
+      "loss_l1": 226.00575873333474,
+      "loss_l2": 130310.47686820652
+    },
+    {
+      "epoch": 4,
+      "time": "2026-03-16T13:06:37.908899",
+      "loss_total": 65261.691864809785,
+      "loss_l1": 226.00797616709835,
+      "loss_l2": 130297.37564538044
+    },
+    {
+      "epoch": 5,
+      "time": "2026-03-16T13:08:59.040872",
+      "loss_total": 65220.469038722826,
+      "loss_l1": 225.94429417485776,
+      "loss_l2": 130214.99375
+    },
+    {
+      "epoch": 6,
+      "time": "2026-03-16T13:11:49.566688",
+      "loss_total": 65188.573607336955,
+      "loss_l1": 225.87455023060673,
+      "loss_l2": 130151.27289402173
+    },
+    {
+      "epoch": 7,
+      "time": "2026-03-16T13:16:40.013506",
+      "loss_total": 65249.07903362772,
+      "loss_l1": 226.06053018984588,
+      "loss_l2": 130272.09750339674
+    },
+    {
+      "epoch": 8,
+      "time": "2026-03-16T13:20:55.065440",
+      "loss_total": 65213.74306216033,
+      "loss_l1": 225.95163753343664,
+      "loss_l2": 130201.5343580163
+    },
+    {
+      "epoch": 0,
+      "time": "2026-03-16T13:26:59.402346",
+      "loss_total": 67369.08430706522,
+      "loss_l1": 224.0397611535114,
+      "loss_l2": 134514.1289402174
+    },
+    {
+      "epoch": 1,
+      "time": "2026-03-16T13:29:20.349670",
+      "loss_total": 65313.60130774457,
+      "loss_l1": 226.05184929889182,
+      "loss_l2": 130401.15078125
+    },
+    {
+      "epoch": 2,
+      "time": "2026-03-16T13:31:40.791890",
+      "loss_total": 65196.213671875,
+      "loss_l1": 225.79294778575067,
+      "loss_l2": 130166.634375
+    },
+    {
+      "epoch": 3,
+      "time": "2026-03-16T13:34:00.792805",
+      "loss_total": 65217.58031589674,
+      "loss_l1": 225.8367440265158,
+      "loss_l2": 130209.32353940218
+    },
+    {
+      "epoch": 0,
+      "time": "2026-03-16T13:57:01.328264",
+      "loss_total": 79351.90828804347,
+      "loss_l1": 231.37771357660708,
+      "loss_l2": 158472.4394701087
+    },
+    {
+      "epoch": 1,
+      "time": "2026-03-16T14:06:31.997016",
+      "loss_total": 65370.475390625,
+      "loss_l1": 226.2144204844599,
+      "loss_l2": 130514.73639605979
+    },
+    {
+      "epoch": 2,
+      "time": "2026-03-16T14:16:01.893029",
+      "loss_total": 65201.59033627717,
+      "loss_l1": 225.84040427829908,
+      "loss_l2": 130177.34014945652
+    },
+    {
+      "epoch": 3,
+      "time": "2026-03-16T14:25:32.276047",
+      "loss_total": 65211.903914741844,
+      "loss_l1": 225.82593035490618,
+      "loss_l2": 130197.98194633152
+    }
+  ]
+}
