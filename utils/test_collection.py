@@ -191,7 +191,7 @@ class TestingClass():
         denoised_img = []
         for path in denoised_paths:
             denoised_img.append(tifffile.TiffFile(path).asarray())
-        if self.dimensionality == '(3+1)D':
+        if self.dimensionality == '3+1D':
             denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
         else:
             denoised_img = np.array(denoised_img)
@@ -201,9 +201,9 @@ class TestingClass():
         out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
         print(out_path)
         if self.dimensionality == '3+1D': 
-            tifffile.imwrite(out_path, denoised_img, imagej=True, metadata={'axes': 'TZYX'})
+            tifffile.imwrite(out_path, denoised_img.astype(np.float32), imagej=True, metadata={'axes': 'TZYX'})
         elif self.dimensionality == '2+1D':
-            tifffile.imwrite(out_path, denoised_img, imagej=True, metadata={'axes': 'TYX'})
+            tifffile.imwrite(out_path, denoised_img.astype(np.float32), imagej=True, metadata={'axes': 'TYX'})
         
         
         
