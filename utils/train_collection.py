@@ -111,57 +111,69 @@ class TrainingClass():
         except Exception:
             pass
 
+    def _read_stack(self, path):
+        noisy_img = tifffile.TiffFile(path).asarray()
+        return noisy_img.astype(np.float32, copy=False)
+
+    def _describe_stack(self, noisy_shape):
+        if self.dimensionality == "3+1D":
+            if len(noisy_shape) == 4:
+                T, Z, Y, X = noisy_shape
+                return f"(X, Y, Z, T) = ({X}, {Y}, {Z}, {T})"
+            if len(noisy_shape) == 3:
+                T, Y, X = noisy_shape
+                return f"(X, Y, T) = ({X}, {Y}, {T}) [legacy slice stack]"
+            raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_shape}.")
+
+        if self.dimensionality == "2+1D":
+            if len(noisy_shape) != 3:
+                raise ValueError(f"Expected a 3D TIFF for 2+1D input, received shape {noisy_shape}.")
+            T, Y, X = noisy_shape
+            return f"(X, Y, T) = ({X}, {Y}, {T})"
+
+        if self.dimensionality == "3D":
+            if len(noisy_shape) != 3:
+                raise ValueError(f"Expected a 3D TIFF for 3D input, received shape {noisy_shape}.")
+            Z, Y, X = noisy_shape
+            return f"(X, Y, Z) = ({X}, {Y}, {Z})"
+
+        return f"Shape: {noisy_shape}"
+
+    def _prepare_training_stacks(self, noisy_img):
+        if self.dimensionality == "3+1D":
+            if noisy_img.ndim == 4:
+                return [
+                    torch.from_numpy(np.ascontiguousarray(noisy_img[:, z_idx, :, :])).type(torch.FloatTensor)
+                    for z_idx in range(noisy_img.shape[1])
+                ]
+            if noisy_img.ndim == 3:
+                return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
+            raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_img.shape}.")
+
+        if noisy_img.ndim != 3:
+            raise ValueError(
+                f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
+            )
+        return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
+
     def generate_dataloader(self):
         """
         
         """
         noisy_imgs = []
         print("\033[1;31mLoaded Files -----> \033[0m")
-        if self.is_dir:
-            noisy_paths = list(Path(self.in_path).glob('*.tif'))
-            noisy_paths = [str(path) for path in noisy_paths]
-            noisy_paths.sort()
-            noisy_stems = [str(Path(path).stem) for path in noisy_paths]
-            slen = max((len(s) for s in noisy_stems), default=0)
-            for i, path in enumerate(noisy_paths):
-                noisy_img = tifffile.TiffFile(path).asarray()
-                noisy_img = noisy_img.astype(np.float32, copy=False)
-                noisy_img = torch.from_numpy(noisy_img).type(torch.FloatTensor)
-                noisy_stem = noisy_stems[i]
-                noisy_shape = noisy_img.shape
-                if self.dimensionality == "3+1D":
-                    T, Y, X = noisy_shape
-                    Z = len(noisy_paths)
-                    print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z, T) = ({X}, {Y}, {Z}, {T})")
-                elif self.dimensionality == "2+1D":
-                    T, Y, X = noisy_shape
-                    print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, T) = ({X}, {Y}, {T})")
-                elif self.dimensionality == "3D":
-                    Z, Y, X = noisy_shape
-                    print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z) = ({X}, {Y}, {Z})")
-                else:
-                    print(f"\033[1m{noisy_stem:<{slen}}\033[0m  Shape: {noisy_shape}")
-                noisy_imgs.append(noisy_img)
-        else: 
-            noisy_imgs = tifffile.TiffFile(self.in_path).asarray()
-            noisy_imgs = noisy_imgs.astype(np.float32, copy=False)
-            noisy_imgs = torch.from_numpy(noisy_imgs).type(torch.FloatTensor)
-            noisy_stem = Path(self.in_path).stem
-            slen = len(noisy_stem)
-            noisy_shape = noisy_imgs.shape
+        noisy_paths = list(Path(self.in_path).glob('*.tif')) if self.is_dir else [Path(self.in_path)]
+        noisy_paths = sorted(noisy_paths)
+        if len(noisy_paths) == 0:
+            raise FileNotFoundError(f'No TIFF files were found in {self.in_path}.')
+        noisy_stems = [str(path.stem) for path in noisy_paths]
+        slen = max((len(s) for s in noisy_stems), default=0)
 
-            if self.dimensionality == "3+1D":
-                T, Z, Y, X = noisy_shape
-                print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z, T) = ({X}, {Y}, {Z}, {T})")
-            elif self.dimensionality == "2+1D":
-                T, Y, X = noisy_shape
-                print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, T) = ({X}, {Y}, {T})")
-            elif self.dimensionality == "3D":
-                Z, Y, X = noisy_shape
-                print(f"\033[1m{noisy_stem:<{slen}}\033[0m  (X, Y, Z) = ({X}, {Y}, {Z})")
-            else:
-                print(f"\033[1m{noisy_stem:<{slen}}\033[0m  Shape: {noisy_shape}")
-            noisy_imgs = [noisy_imgs]
+        for path, noisy_stem in zip(noisy_paths, noisy_stems):
+            noisy_img = self._read_stack(path)
+            print(f"\033[1m{noisy_stem:<{slen}}\033[0m  {self._describe_stack(noisy_img.shape)}")
+            noisy_imgs.extend(self._prepare_training_stacks(noisy_img))
+
         dataset = DatasetSUPPORT(
             noisy_imgs=noisy_imgs,
             patch_size=self.patch_size,
@@ -307,5 +319,3 @@ class TrainingClass():
             if epoch == self.n_epochs or epoch == self.n_epochs-1: torch.save(self.local_model.state_dict(), self.pth_dir + f'/model{epoch+1:03d}.pth')
             if epoch in clear_epochs:
                 clear_output(wait=True)
-
-

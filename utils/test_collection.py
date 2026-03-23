@@ -117,10 +117,33 @@ class TestingClass():
         self.local_model.load_state_dict(checkpoint)
         self.local_model.to('cuda')
         
-    def generate_dataloader(self, path):
-        """"""
+    def _read_stack(self, path):
         noisy_img = tifffile.TiffFile(path).asarray()
-        noisy_img = noisy_img.astype(np.float32, copy=False)
+        return noisy_img.astype(np.float32, copy=False)
+
+    def _describe_stack(self, noisy_shape):
+        if self.dimensionality == "3+1D":
+            if len(noisy_shape) == 4:
+                T, Z, Y, X = noisy_shape
+                return f"(X, Y, Z, T) = ({X}, {Y}, {Z}, {T})"
+            if len(noisy_shape) == 3:
+                T, Y, X = noisy_shape
+                return f"(X, Y, T) = ({X}, {Y}, {T}) [legacy slice stack]"
+            raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_shape}.")
+
+        if self.dimensionality == "2+1D":
+            if len(noisy_shape) != 3:
+                raise ValueError(f"Expected a 3D TIFF for 2+1D input, received shape {noisy_shape}.")
+            T, Y, X = noisy_shape
+            return f"(X, Y, T) = ({X}, {Y}, {T})"
+
+        if len(noisy_shape) != 3:
+            raise ValueError(f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_shape}.")
+        Z, Y, X = noisy_shape
+        return f"(X, Y, Z) = ({X}, {Y}, {Z})"
+
+    def generate_dataloader(self, noisy_img):
+        """"""
         if self.pad: noisy_img = np.pad(noisy_img, (((self.local_model.in_channels)//2, (self.local_model.in_channels)//2), (0,0), (0,0)), 'reflect')
         noisy_img = torch.from_numpy(noisy_img).type(torch.FloatTensor)
         test_set = DatasetSUPPORT_test_stitch(
@@ -136,12 +159,28 @@ class TestingClass():
             batch_size=self.batch_size, 
             num_workers=self.n_cpu,
         )
-            
-    def save_inference(self, out_path):
-        if self.pad:
-            crop_margin = (self.local_model.in_channels) // 2
-            tifffile.imwrite(out_path, self.denoised_stack[crop_margin:-crop_margin, :, :], imagej=True, metadata={'axes': 'TYX'})
-        else: tifffile.imwrite(out_path, self.denoised_stack, imagej=True, metadata={'axes': 'TYX'})
+
+    def _crop_padding(self, denoised_stack):
+        if not self.pad:
+            return denoised_stack
+        crop_margin = (self.local_model.in_channels) // 2
+        return denoised_stack[crop_margin:-crop_margin, :, :]
+
+    def save_inference(self, out_path, denoised_img, axes):
+        tifffile.imwrite(out_path, denoised_img.astype(np.float32), imagej=True, metadata={'axes': axes})
+
+    def _run_inference_on_stack(self, noisy_img):
+        self.generate_dataloader(noisy_img)
+        self.test()
+        return self._crop_padding(self.denoised_stack)
+
+    def _run_inference_on_4d_stack(self, noisy_img):
+        denoised_slices = []
+        total_slices = noisy_img.shape[1]
+        for z_idx in range(total_slices):
+            print(f'  Slice {z_idx+1}/{total_slices}')
+            denoised_slices.append(self._run_inference_on_stack(np.ascontiguousarray(noisy_img[:, z_idx, :, :])))
+        return np.stack(denoised_slices, axis=1).astype(np.float32)
         
             
     def test(self):
@@ -181,57 +220,86 @@ class TestingClass():
 
             # change nan values to 0 and denormalize
             self.denoised_stack = denoised_stack * self.dataloader.dataset.std_img.numpy() + self.dataloader.dataset.mean_img.numpy()
-        
-    def compile(self):
-        """
-        """
-        denoised_paths = list(Path(self.out_dir).glob(f'{self.exp_name}*.tif'))
-        denoised_paths = [str(path) for path in denoised_paths]
-        denoised_paths.sort()
-        denoised_img = []
-        for path in denoised_paths:
-            denoised_img.append(tifffile.TiffFile(path).asarray())
-        if self.dimensionality == '3+1D':
-            denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
-        else:
-            denoised_img = np.array(denoised_img)
-        # try:
-        #     for path in denoised_paths: Path(path).unlink()
-        # except: pass
-        out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
-        print(out_path)
-        if self.dimensionality == '3+1D': 
-            tifffile.imwrite(out_path, denoised_img.astype(np.float32), imagej=True, metadata={'axes': 'TZYX'})
-        elif self.dimensionality == '2+1D':
-            tifffile.imwrite(out_path, denoised_img.astype(np.float32), imagej=True, metadata={'axes': 'TYX'})
-        
-        
-        
+
+    def _infer_single_input(self, noisy_img):
+        if self.dimensionality == "3+1D":
+            if noisy_img.ndim == 4:
+                return self._run_inference_on_4d_stack(noisy_img), 'TZYX'
+            if noisy_img.ndim == 3:
+                return self._run_inference_on_stack(noisy_img), 'TYX'
+            raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_img.shape}.")
+
+        if noisy_img.ndim != 3:
+            raise ValueError(
+                f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
+            )
+        return self._run_inference_on_stack(noisy_img), 'TYX'
+
     def run_test(self):
         """
         """
         if self.is_dir:
-            out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
-            print(out_path)
             noisy_paths = list(Path(self.in_path).glob('*.tif'))
-            noisy_paths = [str(path) for path in noisy_paths]
-            noisy_paths.sort()
-            noisy_stems = [str(Path(path).stem) for path in noisy_paths]
-            for i, path in enumerate(noisy_paths):
-                out_path = self.out_dir+f'/{self.exp_name}_{i:03d}.tif'
+            noisy_paths = sorted(noisy_paths)
+            if len(noisy_paths) == 0:
+                raise FileNotFoundError(f'No TIFF files were found in {self.in_path}.')
+
+            if self.dimensionality == "3+1D":
+                first_img = self._read_stack(noisy_paths[0])
+                if first_img.ndim == 3:
+                    print("\033[1;31mRunning inference on\033[0m")
+                    print(f'\033[1m{self.exp_name}\033[0m  [legacy 3+1D slice directory]')
+                    denoised_slices = []
+                    for i, path in enumerate(noisy_paths):
+                        noisy_img = first_img if i == 0 else self._read_stack(path)
+                        if noisy_img.ndim != 3:
+                            raise ValueError(
+                                f"Mixed TIFF dimensionalities found in {self.in_path}. "
+                                "Legacy 3+1D slice directories must contain only 3D TIFFs."
+                            )
+                        noisy_stem = str(path.stem)
+                        print(f'  Slice stack \033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
+                        denoised_slices.append(self._run_inference_on_stack(noisy_img))
+                    denoised_img = np.stack(denoised_slices, axis=1).astype(np.float32)
+                    out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
+                    print(f'Saving denoised \033[1m{self.exp_name}\033[0m to {out_path}')
+                    self.save_inference(out_path, denoised_img, 'TZYX')
+                    return
+
+                if first_img.ndim != 4:
+                    raise ValueError(f"Expected 4D TIFF stacks for 3+1D directory input, received shape {first_img.shape}.")
+
+                for i, path in enumerate(noisy_paths):
+                    noisy_img = first_img if i == 0 else self._read_stack(path)
+                    if noisy_img.ndim != 4:
+                        raise ValueError(
+                            f"Mixed TIFF dimensionalities found in {self.in_path}. "
+                            "3+1D stack directories must contain only 4D TIFFs."
+                        )
+                    noisy_stem = str(path.stem)
+                    out_path = self.out_dir + f'/{noisy_stem}_SPRT.tif'
+                    print("\033[1;31mRunning inference on\033[0m")
+                    print(f'\033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
+                    denoised_img, axes = self._infer_single_input(noisy_img)
+                    print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
+                    self.save_inference(out_path, denoised_img, axes)
+                return
+
+            for path in noisy_paths:
+                noisy_stem = str(path.stem)
+                noisy_img = self._read_stack(path)
+                out_path = self.out_dir + f'/{noisy_stem}_SPRT.tif'
                 print("\033[1;31mRunning inference on\033[0m")
-                print(f'\033[1m{noisy_stems[i]}\033[0m')
-                self.generate_dataloader(path)
-                self.test()
-                print(f'Saving denoised \033[1m{noisy_stems[i]}\033[0m to {out_path}')
-                self.save_inference(out_path)
-            if self.dimensionality in ("3+1D", "2+1D"): self.compile()
+                print(f'\033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
+                denoised_img, axes = self._infer_single_input(noisy_img)
+                print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
+                self.save_inference(out_path, denoised_img, axes)
         else:
-            noisy_stem = str(Path(self.in_path).stem)
+            noisy_path = Path(self.in_path)
+            noisy_stem = str(noisy_path.stem)
             out_path = self.out_dir+f'/{self.exp_name}.tif'
-            print(f'Running inference on \033[1m{noisy_stem}\033[0m')
-            self.generate_dataloader(self.in_path)
-            self.test()
+            noisy_img = self._read_stack(noisy_path)
+            print(f'Running inference on \033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
+            denoised_img, axes = self._infer_single_input(noisy_img)
             print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
-            self.save_inference(out_path)
-            
+            self.save_inference(out_path, denoised_img, axes)
