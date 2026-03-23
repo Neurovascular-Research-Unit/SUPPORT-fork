@@ -140,8 +140,8 @@ class TestingClass():
     def save_inference(self, out_path):
         if self.pad:
             crop_margin = (self.local_model.in_channels) // 2
-            tifffile.imwrite(out_path, self.denoised_stack[crop_margin:-crop_margin, :, :], metadata={'axes': 'TYX'})
-        else: tifffile.imwrite(out_path, self.denoised_stack, metadata={'axes': 'TYX'})
+            tifffile.imwrite(out_path, self.denoised_stack[crop_margin:-crop_margin, :, :], imagej=True, metadata={'axes': 'TYX'})
+        else: tifffile.imwrite(out_path, self.denoised_stack, imagej=True, metadata={'axes': 'TYX'})
         
             
     def test(self):
@@ -195,9 +195,9 @@ class TestingClass():
             denoised_img = np.stack(denoised_img, axis=1).astype(np.float32)
         else:
             denoised_img = np.array(denoised_img)
-        try:
-            for path in denoised_paths: Path(path).unlink()
-        except: pass
+        # try:
+        #     for path in denoised_paths: Path(path).unlink()
+        # except: pass
         out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
         print(out_path)
         if self.dimensionality == '3+1D': 
@@ -225,6 +225,7 @@ class TestingClass():
                 self.test()
                 print(f'Saving denoised \033[1m{noisy_stems[i]}\033[0m to {out_path}')
                 self.save_inference(out_path)
+            if self.dimensionality in ("3+1D", "2+1D"): self.compile()
         else:
             noisy_stem = str(Path(self.in_path).stem)
             out_path = self.out_dir+f'/{self.exp_name}.tif'
@@ -233,4 +234,4 @@ class TestingClass():
             self.test()
             print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
             self.save_inference(out_path)
-        if self.dimensionality in ("3+1D", "2+1D"): self.compile()
+            
