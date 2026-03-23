@@ -181,6 +181,11 @@ class TestingClass():
             print(f'  Slice {z_idx+1}/{total_slices}')
             denoised_slices.append(self._run_inference_on_stack(np.ascontiguousarray(noisy_img[:, z_idx, :, :])))
         return np.stack(denoised_slices, axis=1).astype(np.float32)
+
+    def _single_stack_axes(self):
+        if self.dimensionality == "3D":
+            return 'ZYX'
+        return 'TYX'
         
             
     def test(self):
@@ -226,14 +231,14 @@ class TestingClass():
             if noisy_img.ndim == 4:
                 return self._run_inference_on_4d_stack(noisy_img), 'TZYX'
             if noisy_img.ndim == 3:
-                return self._run_inference_on_stack(noisy_img), 'TYX'
+                return self._run_inference_on_stack(noisy_img), self._single_stack_axes()
             raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_img.shape}.")
 
         if noisy_img.ndim != 3:
             raise ValueError(
                 f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
             )
-        return self._run_inference_on_stack(noisy_img), 'TYX'
+        return self._run_inference_on_stack(noisy_img), self._single_stack_axes()
 
     def run_test(self):
         """

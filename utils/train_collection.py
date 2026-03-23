@@ -150,6 +150,13 @@ class TrainingClass():
                 return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
             raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_img.shape}.")
 
+        if self.dimensionality in ("2+1D", "3D"):
+            if noisy_img.ndim != 3:
+                raise ValueError(
+                    f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
+                )
+            return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
+
         if noisy_img.ndim != 3:
             raise ValueError(
                 f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
