@@ -13,39 +13,38 @@
       "ll_channels": [64, 32, 16],
       "unet_channels": [64, 128, 256, 512, 1024],
       "bs_size": [5, 5],
-      "bp": "False",
+      "bp": false,
       "loss_coef": [0.5, 0.5]
     },
     "test": {
-      "patch_size": [91, 128, 128],
       "patch_interval": [1, 16, 16],
       "batch_size": 128,
       "prefetch_factor": 2,
-      "pad": "True"
+      "pad": true
     }
   },
   "3D": {
     "train": {
-      "n_epochs": 10,
-      "patch_size": [31, 128, 128],
-      "patch_interval": [1, 32, 32],
+      "n_epochs": 50,
+      "patch_size": [91, 128, 128],
+      "patch_interval": [1, 64, 64],
       "batch_size": 128,
-      "prefetch_factor": 6,
-      "lr": 1e-5,
+      "prefetch_factor": 2,
+      "lr": 5e-4,
       "depth": 5,
       "bc_channels": 64,
       "obo_channels": [32, 16],
       "ll_channels": [64, 32, 16],
-      "unet_channels": [256, 512, 1024, 2048, 4096],
-      "bs_size": [3, 3],
-      "bp": "True",
+      "unet_channels": [256, 512, 1024, 512, 4096],
+      "bs_size": [7, 7],
+      "bp": false,
       "loss_coef": [0.5, 0.5]
     },
     "test": {
       "patch_interval": [1, 16, 16],
-      "batch_size": 128,
-      "prefetch_factor": 2,
-      "pad": "True"
+      "batch_size": 256,
+      "prefetch_factor": 4,
+      "pad": true
     }
   },
   "2+1D": {
@@ -62,11 +61,10 @@
       "ll_channels": [64, 32, 16],
       "unet_channels": [64, 128, 256, 512, 1024],
       "bs_size": [5, 5],
-      "bp": "True",
+      "bp": false,
       "loss_coef": [0.5, 0.5]
     },
     "test": {
-      "patch_size": [91, 128, 128],
       "patch_interval": [1, 32, 32],
       "batch_size": 256,
       "prefetch_factor": 1,
