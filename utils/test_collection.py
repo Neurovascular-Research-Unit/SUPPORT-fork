@@ -119,7 +119,8 @@ class TestingClass():
         
     def _read_stack(self, path):
         noisy_img = tifffile.TiffFile(path).asarray()
-        return noisy_img.astype(np.float32, copy=False)
+        noisy_img = torch.from_numpy(noisy_img).to("cuda").to(torch.float32).cpu().numpy()
+        return noisy_img
 
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":

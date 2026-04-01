@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from utils.loss_plot import plotASCII
 from IPython.display import clear_output
 
+
 class TrainingClass():
     """
     Class implementing training process.
@@ -113,7 +114,8 @@ class TrainingClass():
 
     def _read_stack(self, path):
         noisy_img = tifffile.TiffFile(path).asarray()
-        return noisy_img.astype(np.float32, copy=False)
+        noisy_img = torch.from_numpy(noisy_img).to("cuda").to(torch.float32).cpu().numpy()
+        return noisy_img
 
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":
@@ -122,7 +124,7 @@ class TrainingClass():
                 return f"(X, Y, Z, T) = ({X}, {Y}, {Z}, {T})"
             if len(noisy_shape) == 3:
                 T, Y, X = noisy_shape
-                return f"(X, Y, T) = ({X}, {Y}, {T}) [legacy slice stack]"
+                return f"(X, Y, T) = ({X}, {Y}, {T})"
             raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_shape}.")
 
         if self.dimensionality == "2+1D":
@@ -215,7 +217,7 @@ class TrainingClass():
             one_by_one_channels=self.obo_channels,
             last_layer_channels=self.ll_channels,
             bs_size=self.bs_size,
-            bp=self.bp
+            bp=self.bp,
         )
         self.local_model = model
 
