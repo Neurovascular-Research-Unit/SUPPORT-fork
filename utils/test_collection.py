@@ -1,4 +1,5 @@
 import shutil
+import tempfile
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path('./').resolve().parent.parent))
@@ -168,7 +169,22 @@ class TestingClass():
         return denoised_stack[crop_margin:-crop_margin, :, :]
 
     def save_inference(self, out_path, denoised_img, axes):
-        tifffile.imwrite(out_path, denoised_img.astype(np.float32), imagej=True, metadata={'axes': axes})
+        tifffile.imwrite(out_path, np.asarray(denoised_img, dtype=np.float32), imagej=True, metadata={'axes': axes})
+
+    def _create_cache_dir(self, label):
+        cache_root = Path(self.out_dir) / ".support_cache"
+        cache_root.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=f"{self.exp_name}_{label}_", dir=cache_root))
+
+    def _cleanup_cache_dir(self, cache_dir):
+        if cache_dir is None:
+            return
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        cache_root = cache_dir.parent
+        try:
+            cache_root.rmdir()
+        except OSError:
+            pass
 
     def _run_inference_on_stack(self, noisy_img):
         self.generate_dataloader(noisy_img)
@@ -176,12 +192,23 @@ class TestingClass():
         return self._crop_padding(self.denoised_stack)
 
     def _run_inference_on_4d_stack(self, noisy_img):
-        denoised_slices = []
+        cache_dir = self._create_cache_dir("4d_volume_cache")
         total_slices = noisy_img.shape[1]
-        for z_idx in range(total_slices):
-            print(f'  Slice {z_idx+1}/{total_slices}')
-            denoised_slices.append(self._run_inference_on_stack(np.ascontiguousarray(noisy_img[:, z_idx, :, :])))
-        return np.stack(denoised_slices, axis=1).astype(np.float32)
+        try:
+            for z_idx in range(total_slices):
+                print(f'  Slice {z_idx+1}/{total_slices}')
+                denoised_slice = self._run_inference_on_stack(np.ascontiguousarray(noisy_img[:, z_idx, :, :]))
+                np.save(cache_dir / f"slice_{z_idx:05d}.npy", denoised_slice.astype(np.float32))
+
+            stitched_img = np.empty(
+                (noisy_img.shape[0], total_slices, noisy_img.shape[2], noisy_img.shape[3]),
+                dtype=np.float32,
+            )
+            for z_idx in range(total_slices):
+                stitched_img[:, z_idx, :, :] = np.load(cache_dir / f"slice_{z_idx:05d}.npy", mmap_mode='r')
+            return stitched_img
+        finally:
+            self._cleanup_cache_dir(cache_dir)
 
     def _single_stack_axes(self):
         if self.dimensionality == "3D":
@@ -255,18 +282,28 @@ class TestingClass():
                 if first_img.ndim == 3:
                     print("\033[1;31mRunning inference on\033[0m")
                     print(f'\033[1m{self.exp_name}\033[0m  [legacy 3+1D slice directory]')
-                    denoised_slices = []
-                    for i, path in enumerate(noisy_paths):
-                        noisy_img = first_img if i == 0 else self._read_stack(path)
-                        if noisy_img.ndim != 3:
-                            raise ValueError(
-                                f"Mixed TIFF dimensionalities found in {self.in_path}. "
-                                "Legacy 3+1D slice directories must contain only 3D TIFFs."
-                            )
-                        noisy_stem = str(path.stem)
-                        print(f'  Slice stack \033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
-                        denoised_slices.append(self._run_inference_on_stack(noisy_img))
-                    denoised_img = np.stack(denoised_slices, axis=1).astype(np.float32)
+                    cache_dir = self._create_cache_dir("legacy_3p1d_cache")
+                    try:
+                        for i, path in enumerate(noisy_paths):
+                            noisy_img = first_img if i == 0 else self._read_stack(path)
+                            if noisy_img.ndim != 3:
+                                raise ValueError(
+                                    f"Mixed TIFF dimensionalities found in {self.in_path}. "
+                                    "Legacy 3+1D slice directories must contain only 3D TIFFs."
+                                )
+                            noisy_stem = str(path.stem)
+                            print(f'  Slice stack \033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
+                            denoised_slice = self._run_inference_on_stack(noisy_img)
+                            np.save(cache_dir / f"slice_{i:05d}.npy", denoised_slice.astype(np.float32))
+
+                        denoised_img = np.empty(
+                            (first_img.shape[0], len(noisy_paths), first_img.shape[1], first_img.shape[2]),
+                            dtype=np.float32,
+                        )
+                        for i in range(len(noisy_paths)):
+                            denoised_img[:, i, :, :] = np.load(cache_dir / f"slice_{i:05d}.npy", mmap_mode='r')
+                    finally:
+                        self._cleanup_cache_dir(cache_dir)
                     out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
                     print(f'Saving denoised \033[1m{self.exp_name}\033[0m to {out_path}')
                     self.save_inference(out_path, denoised_img, 'TZYX')
