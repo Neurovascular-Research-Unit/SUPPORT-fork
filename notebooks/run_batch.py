@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
 sys.path.insert(0, str(Path('./').resolve().parent.parent))
 
@@ -63,16 +64,17 @@ def run_all(path):
     }
     train_cd = TrainingClass(train_dict)
     train_cd.vars_dict()
+    try:
+        train_cd.run()
 
-    train_cd.run()
-    torch.cuda.empty_cache()
-
-    epoch = vars(train_cd)['n_epochs']
-    model_path = vars(train_cd)['pth_dir'] + f'/model{epoch:03d}.pth'
-    test_params['model_path'] = model_path.replace('/vf/users', '/data')
-    test_params['out_dir'] = vars(train_cd)['out_dir'].replace('/vf/users', '/data')
-    test_params['exp_name'] = vars(train_cd)['exp_name']
-    del train_cd
+        epoch = vars(train_cd)['n_epochs']
+        model_path = vars(train_cd)['pth_dir'] + f'/model{epoch:03d}.pth'
+        test_params['model_path'] = model_path.replace('/vf/users', '/data')
+        test_params['out_dir'] = vars(train_cd)['out_dir'].replace('/vf/users', '/data')
+        test_params['exp_name'] = vars(train_cd)['exp_name']
+    finally:
+        train_cd.release_resources()
+        del train_cd
     gc.collect()
     torch.cuda.empty_cache()
     test_dict = {
@@ -96,8 +98,10 @@ def run_all(path):
         'pad':              test_params['pad']
     }
     test_cd = TestingClass(test_dict)
-
-    test_cd.run()
+    try:
+        test_cd.run()
+    finally:
+        test_cd.release_resources()
     torch.cuda.empty_cache()
     
     if dimensionality in ("3+1D", "3D") and segment:

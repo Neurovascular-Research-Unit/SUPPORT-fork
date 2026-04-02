@@ -91,6 +91,25 @@ class TrainingClass():
         return kwargs
         
     def vars_dict(self): self.prepare_file()
+
+    def release_resources(self):
+        if hasattr(self, "local_model"):
+            self.local_model.to("cpu")
+            del self.local_model
+        if hasattr(self, "optimizer"):
+            self.optimizer.state.clear()
+            del self.optimizer
+        if hasattr(self, "scaler"):
+            del self.scaler
+        if hasattr(self, "dataloader"):
+            del self.dataloader
+        if hasattr(self, "Tensor"):
+            del self.Tensor
+        if hasattr(self, "rng"):
+            del self.rng
+        if self.cuda:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
         
     def run(self):
         """

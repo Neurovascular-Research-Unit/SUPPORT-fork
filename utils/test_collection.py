@@ -86,6 +86,18 @@ class TestingClass():
         """
         self.initialize_network()
         self.run_test()
+
+    def release_resources(self):
+        if hasattr(self, "local_model"):
+            self.local_model.to("cpu")
+            del self.local_model
+        if hasattr(self, "dataloader"):
+            del self.dataloader
+        if hasattr(self, "denoised_stack"):
+            del self.denoised_stack
+        if self.cuda:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
         
     def set_params(self, params_dict):
         # This is where I would implement overlap factor
@@ -205,7 +217,14 @@ class TestingClass():
     def _run_inference_on_stack(self, noisy_img):
         self.generate_dataloader(noisy_img)
         self.test()
-        return self._crop_padding(self.denoised_stack)
+        denoised_stack = self._crop_padding(self.denoised_stack)
+        if hasattr(self, "dataloader"):
+            del self.dataloader
+        if hasattr(self, "denoised_stack"):
+            del self.denoised_stack
+        if self.cuda:
+            torch.cuda.empty_cache()
+        return denoised_stack
 
     def _run_inference_on_4d_stack(self, noisy_img):
         cache_dir = self._create_cache_dir("4d_volume_cache")
@@ -266,6 +285,8 @@ class TestingClass():
                     
                     denoised_stack[stack_start_s+(T//2), stack_start_h:stack_end_h, stack_start_w:stack_end_w] \
                         = noisy_img_denoised[bi].squeeze()[patch_start_h:patch_end_h, patch_start_w:patch_end_w].cpu()
+                del noisy_img_denoised
+                del noisy_img
 
             # change nan values to 0 and denormalize
             self.denoised_stack = denoised_stack * self.dataloader.dataset.std_img.numpy() + self.dataloader.dataset.mean_img.numpy()
