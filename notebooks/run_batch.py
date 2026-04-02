@@ -129,6 +129,8 @@ def run_all(path):
             cwd="/vf/users/garfinkeljb/vesselFM",
             env=os.environ.copy(),
         )
+    gc.collect()
+    torch.cuda.empty_cache()
     
 paths = list(Path('/data/garfinkeljb/data_noisy').glob('*.tif'))
 paths = [str(path) for path in paths]
@@ -136,11 +138,7 @@ num_paths = len(paths)
 for i,path in enumerate(paths):
     print(f'Denoising {i} of {num_paths}')
     run_all(path)
-    try:
-        shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
-    except:
-        pass
-    try:
-        shutil.rmtree(path)
-    except:
-        pass
+    try: shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
+    except: pass
+    try: shutil.rmtree(path)
+    except: pass
