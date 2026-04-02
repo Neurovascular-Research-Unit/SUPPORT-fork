@@ -17,6 +17,20 @@ import shutil
 
 SCRIPT_PATH = Path(__file__).resolve()
 
+
+def _apply_int_override(params, key, env_name):
+    value = os.environ.get(env_name)
+    if value is None:
+        return
+    params[key] = int(value)
+
+
+def _single_path_env(overrides):
+    env = os.environ.copy()
+    for key, value in overrides.items():
+        env[key] = str(value)
+    return env
+
 def run_all(path):
     os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
     in_path = path
@@ -34,6 +48,10 @@ def run_all(path):
     with open('./parameters.json', 'r') as file: params = json.load(file)
     train_params = params[dimensionality]['train']
     test_params = params[dimensionality]['test']
+
+    _apply_int_override(test_params, 'batch_size', 'SUPPORT_TEST_BATCH_SIZE')
+    _apply_int_override(test_params, 'n_cpu', 'SUPPORT_TEST_N_CPU')
+    _apply_int_override(test_params, 'prefetch_factor', 'SUPPORT_TEST_PREFETCH_FACTOR')
 
     train_params['dimensionality'] = dimensionality
     train_params['rm_dir'] = rm_dir
@@ -95,7 +113,7 @@ def run_all(path):
         'll_channels':      train_params['ll_channels'],
         'unet_channels':    train_params['unet_channels'],
         'bs_size':          train_params['bs_size'],
-        'n_cpu':            train_params['n_cpu'],
+        'n_cpu':            test_params['n_cpu'],
         'prefetch_factor':  test_params['prefetch_factor'],
         'pad':              test_params['pad']
     }
@@ -147,14 +165,46 @@ def cleanup_after_run(path):
 
 def run_batch(paths):
     num_paths = len(paths)
+    retry_profiles = [
+        {},
+        {
+            "SUPPORT_TEST_BATCH_SIZE": 128,
+            "SUPPORT_TEST_N_CPU": 0,
+        },
+        {
+            "SUPPORT_TEST_BATCH_SIZE": 64,
+            "SUPPORT_TEST_N_CPU": 0,
+        },
+        {
+            "SUPPORT_TEST_BATCH_SIZE": 32,
+            "SUPPORT_TEST_N_CPU": 0,
+        },
+    ]
     for i, path in enumerate(paths, start=1):
         print(f'Denoising {i} of {num_paths}')
-        subprocess.run(
-            [sys.executable, str(SCRIPT_PATH), "--single-path", str(path)],
-            check=True,
-            cwd="/data/garfinkeljb/SUPPORT/notebooks/",
-            env=os.environ.copy(),
-        )
+        success = False
+        for attempt, overrides in enumerate(retry_profiles, start=1):
+            if overrides:
+                print(f"Retrying with safer inference settings: {overrides}")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), "--single-path", str(path)],
+                check=False,
+                cwd="/data/garfinkeljb/SUPPORT/notebooks/",
+                env=_single_path_env(overrides),
+            )
+            if result.returncode == 0:
+                success = True
+                break
+            if result.returncode != -9 or attempt == len(retry_profiles):
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    [sys.executable, str(SCRIPT_PATH), "--single-path", str(path)],
+                )
+            print(f"Child process was killed with SIGKILL on attempt {attempt}.")
+            gc.collect()
+            torch.cuda.empty_cache()
+        if not success:
+            raise RuntimeError(f"Failed to process {path}")
         cleanup_after_run(path)
         gc.collect()
         torch.cuda.empty_cache()

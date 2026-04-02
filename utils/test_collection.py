@@ -72,13 +72,18 @@ class TestingClass():
             return False
 
     def _dataloader_kwargs(self):
-        # Notebook kernels are more prone to worker crashes; fall back to the main process there.
-        num_workers = 0 if self._in_ipykernel() else self.n_cpu
-        return {
+        # This inference dataset keeps the full input stack in memory. Spawning worker
+        # processes can duplicate that tensor and trigger host OOM kills on large volumes.
+        # Prefer the main process unless explicitly overridden by future refactors.
+        num_workers = 0 if self._in_ipykernel() else 0
+        kwargs = {
             "batch_size": self.batch_size,
             "num_workers": num_workers,
             "pin_memory": self.cuda,
         }
+        if num_workers > 0:
+            kwargs["prefetch_factor"] = self.prefetch_factor
+        return kwargs
         
     def run(self):
         """
