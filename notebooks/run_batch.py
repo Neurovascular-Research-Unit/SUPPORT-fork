@@ -15,6 +15,8 @@ from SUPPORT.utils.train_collection import TrainingClass
 from SUPPORT.utils.test_collection import TestingClass
 import shutil
 
+SCRIPT_PATH = Path(__file__).resolve()
+
 def run_all(path):
     os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
     in_path = path
@@ -132,13 +134,36 @@ def run_all(path):
     gc.collect()
     torch.cuda.empty_cache()
     
-paths = list(Path('/data/garfinkeljb/data_noisy').glob('*.tif'))
-paths = [str(path) for path in paths]
-num_paths = len(paths)
-for i,path in enumerate(paths):
-    print(f'Denoising {i} of {num_paths}')
-    run_all(path)
-    try: shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
-    except: pass
-    try: shutil.rmtree(path)
-    except: pass
+def cleanup_after_run(path):
+    try:
+        shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
+    except Exception:
+        pass
+    try:
+        Path(path).unlink()
+    except Exception:
+        pass
+
+
+def run_batch(paths):
+    num_paths = len(paths)
+    for i, path in enumerate(paths, start=1):
+        print(f'Denoising {i} of {num_paths}')
+        subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--single-path", str(path)],
+            check=True,
+            cwd="/data/garfinkeljb/SUPPORT/notebooks/",
+            env=os.environ.copy(),
+        )
+        cleanup_after_run(path)
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--single-path":
+        run_all(sys.argv[2])
+    else:
+        paths = list(Path('/data/garfinkeljb/data_noisy').glob('*.tif'))
+        paths = [str(path) for path in paths]
+        run_batch(paths)
