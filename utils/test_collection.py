@@ -304,9 +304,9 @@ class TestingClass():
                             denoised_img[:, i, :, :] = np.load(cache_dir / f"slice_{i:05d}.npy", mmap_mode='r')
                     finally:
                         self._cleanup_cache_dir(cache_dir)
-                    out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
-                    print(f'Saving denoised \033[1m{self.exp_name}\033[0m to {out_path}')
-                    self.save_inference(out_path, denoised_img, 'TZYX')
+                    self.out_path = self.out_dir + f'/{self.exp_name}_SPRT.tif'
+                    print(f'Saving denoised \033[1m{self.exp_name}\033[0m to {self.out_path}')
+                    self.save_inference(self.out_path, denoised_img, 'TZYX')
                     return
 
                 if first_img.ndim != 4:
@@ -320,29 +320,29 @@ class TestingClass():
                             "3+1D stack directories must contain only 4D TIFFs."
                         )
                     noisy_stem = str(path.stem)
-                    out_path = self.out_dir + f'/{noisy_stem}_SPRT.tif'
+                    self.out_path = self.out_dir + f'/{noisy_stem}_SPRT.tif'
                     print("\033[1;31mRunning inference on\033[0m")
                     print(f'\033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
                     denoised_img, axes = self._infer_single_input(noisy_img)
-                    print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
-                    self.save_inference(out_path, denoised_img, axes)
+                    print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {self.out_path}')
+                    self.save_inference(self.out_path, denoised_img, axes)
                 return
 
             for path in noisy_paths:
                 noisy_stem = str(path.stem)
                 noisy_img = self._read_stack(path)
-                out_path = self.out_dir + f'/{noisy_stem}_SPRT.tif'
+                self.out_path = self.out_dir + f'/{noisy_stem}_SPRT.tif'
                 print("\033[1;31mRunning inference on\033[0m")
                 print(f'\033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
                 denoised_img, axes = self._infer_single_input(noisy_img)
-                print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
-                self.save_inference(out_path, denoised_img, axes)
+                print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {self.out_path}')
+                self.save_inference(self.out_path, denoised_img, axes)
         else:
             noisy_path = Path(self.in_path)
             noisy_stem = str(noisy_path.stem)
-            out_path = self.out_dir+f'/{self.exp_name}.tif'
+            self.out_path = self.out_dir+f'/{self.exp_name}.tif'
             noisy_img = self._read_stack(noisy_path)
             print(f'Running inference on \033[1m{noisy_stem}\033[0m  {self._describe_stack(noisy_img.shape)}')
             denoised_img, axes = self._infer_single_input(noisy_img)
-            print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {out_path}')
-            self.save_inference(out_path, denoised_img, axes)
+            print(f'Saving denoised \033[1m{noisy_stem}\033[0m to {self.out_path}')
+            self.save_inference(self.out_path, denoised_img, axes)
