@@ -1,5 +1,7 @@
 import sys
 from pathlib import Path
+import os
+os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
 sys.path.insert(0, str(Path('./').resolve().parent.parent))
 
 import gc
@@ -13,9 +15,10 @@ from SUPPORT.utils.test_collection import TestingClass
 import shutil
 
 def run_all(path):
+    os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
     in_path = path
     exp_name = None
-    dimensionality = "3+1D" # options: "2+1D" (planar + time), "3D" (static volumetric), or "3+1D" (volumetric + time)
+    dimensionality = "3D" # options: "2+1D" (planar + time), "3D" (static volumetric), or "3+1D" (volumetric + time)
     segment = True
     rm_dir = True # if True, do not preserve checkpoints (saves local storage memory)
 
@@ -123,9 +126,11 @@ def run_all(path):
             env=os.environ.copy(),
         )
     
-paths = list(Path('/data/garfinkeljb/CloudCode/noisy_data').glob('*'))
-paths = [str(path) for path in paths][::-1]
-for path in paths:
+paths = list(Path('/data/garfinkeljb/data_noisy').glob('*.tif'))
+paths = [str(path) for path in paths]
+num_paths = len(paths)
+for i,path in enumerate(paths):
+    print(f'Denoising {i} of {num_paths}')
     run_all(path)
     try:
         shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
