@@ -59,8 +59,26 @@ class TestingClass():
         
         # AUTOMATED
         self.cuda = torch.cuda.is_available() and not self.use_cpu
+        self.device = "cuda" if self.cuda else "cpu"
         self.is_dir = False
         self.set_params(params_dict)
+
+    def _in_ipykernel(self):
+        try:
+            from IPython import get_ipython
+            shell = get_ipython()
+            return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
+        except Exception:
+            return False
+
+    def _dataloader_kwargs(self):
+        # Notebook kernels are more prone to worker crashes; fall back to the main process there.
+        num_workers = 0 if self._in_ipykernel() else self.n_cpu
+        return {
+            "batch_size": self.batch_size,
+            "num_workers": num_workers,
+            "pin_memory": self.cuda,
+        }
         
     def run(self):
         """
@@ -114,14 +132,13 @@ class TestingClass():
             bp=self.bp
         )
         self.local_model = model
-        checkpoint = torch.load(self.model_path, weights_only=True)
+        checkpoint = torch.load(self.model_path, map_location="cpu", weights_only=True)
         self.local_model.load_state_dict(checkpoint)
-        self.local_model.to('cuda')
+        self.local_model.to(self.device)
         
     def _read_stack(self, path):
         noisy_img = tifffile.TiffFile(path).asarray()
-        noisy_img = torch.from_numpy(noisy_img).to("cuda").to(torch.float32).cpu().numpy()
-        return noisy_img
+        return np.asarray(noisy_img, dtype=np.float32)
 
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":
@@ -158,8 +175,7 @@ class TestingClass():
         )
         self.dataloader = DataLoader(
             dataset=test_set, 
-            batch_size=self.batch_size, 
-            num_workers=self.n_cpu,
+            **self._dataloader_kwargs(),
         )
 
     def _crop_padding(self, denoised_stack):
@@ -232,7 +248,7 @@ class TestingClass():
             self.local_model.eval()
             denoised_stack = np.zeros(self.dataloader.dataset.noisy_img.shape, dtype=np.float32)
             for _, (noisy_img, _, single_coordinate) in enumerate(tqdm(self.dataloader, desc="validate")):
-                noisy_img = noisy_img.cuda() #[b, z, y, x]
+                noisy_img = noisy_img.to(self.device) #[b, z, y, x]
                 noisy_img_denoised = self.local_model(noisy_img)
                 T = noisy_img.size(1)
                 for bi in range(noisy_img.size(0)): 

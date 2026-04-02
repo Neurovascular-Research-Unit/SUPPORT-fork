@@ -2,7 +2,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('./').resolve().parent.parent))
 
+import gc
 import json
+import subprocess
+import os
 import torch
 torch.cuda.empty_cache()
 from SUPPORT.utils.train_collection import TrainingClass
@@ -13,6 +16,7 @@ def run_all(path):
     in_path = path
     exp_name = None
     dimensionality = "3+1D" # options: "2+1D" (planar + time), "3D" (static volumetric), or "3+1D" (volumetric + time)
+    segment = True
     rm_dir = True # if True, do not preserve checkpoints (saves local storage memory)
 
     # personalization: one-time change, keep after initialization
@@ -65,6 +69,9 @@ def run_all(path):
     test_params['model_path'] = model_path.replace('/vf/users', '/data')
     test_params['out_dir'] = vars(train_cd)['out_dir'].replace('/vf/users', '/data')
     test_params['exp_name'] = vars(train_cd)['exp_name']
+    del train_cd
+    gc.collect()
+    torch.cuda.empty_cache()
     test_dict = {
         'in_path':          train_params['in_path'],
         'model_path':       test_params['model_path'],
@@ -82,13 +89,39 @@ def run_all(path):
         'unet_channels':    train_params['unet_channels'],
         'bs_size':          train_params['bs_size'],
         'n_cpu':            train_params['n_cpu'],
-        'prefetch_factor':  train_params['prefetch_factor'],
+        'prefetch_factor':  test_params['prefetch_factor'],
         'pad':              test_params['pad']
     }
     test_cd = TestingClass(test_dict)
 
     test_cd.run()
     torch.cuda.empty_cache()
+    
+    if dimensionality in ("3+1D", "3D") and segment:
+        print('Running file through vesselFM for vessel segmentation...\n')
+        out_path = test_cd.out_path
+        seg_out_dir = test_params['out_dir']
+        del test_cd
+        gc.collect()
+        torch.cuda.empty_cache()
+        subprocess.run(
+            [
+                "conda",
+                "run",
+                "-n",
+                "vesselfm",
+                "python",
+                "-m",
+                "vesselfm.seg.inference",
+                f"image_path={out_path}",
+                "image_file_ending=tif",
+                f"output_folder={seg_out_dir}",
+                "device=cuda:0",
+            ],
+            check=True,
+            cwd="/vf/users/garfinkeljb/vesselFM",
+            env=os.environ.copy(),
+        )
     
 paths = list(Path('/data/garfinkeljb/CloudCode/noisy_data').glob('*'))
 paths = [str(path) for path in paths][::-1]

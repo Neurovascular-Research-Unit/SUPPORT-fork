@@ -68,6 +68,27 @@ class TrainingClass():
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.is_dir = False 
         self.set_params(params_dict)
+
+    def _in_ipykernel(self):
+        try:
+            from IPython import get_ipython
+            shell = get_ipython()
+            return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
+        except Exception:
+            return False
+
+    def _dataloader_kwargs(self, shuffle):
+        # Notebook kernels are more prone to worker crashes; fall back to the main process there.
+        num_workers = 0 if self._in_ipykernel() else self.n_cpu
+        kwargs = {
+            "batch_size": self.batch_size,
+            "shuffle": shuffle,
+            "num_workers": num_workers,
+            "pin_memory": self.cuda,
+        }
+        if num_workers > 0:
+            kwargs["prefetch_factor"] = self.prefetch_factor
+        return kwargs
         
     def vars_dict(self): self.prepare_file()
         
@@ -114,8 +135,7 @@ class TrainingClass():
 
     def _read_stack(self, path):
         noisy_img = tifffile.TiffFile(path).asarray()
-        noisy_img = torch.from_numpy(noisy_img).to("cuda").to(torch.float32).cpu().numpy()
-        return noisy_img
+        return np.asarray(noisy_img, dtype=np.float32)
 
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":
@@ -194,11 +214,7 @@ class TrainingClass():
         
         self.dataloader = DataLoader(
             dataset=dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.n_cpu,
-            pin_memory=True,
-            prefetch_factor=self.prefetch_factor
+            **self._dataloader_kwargs(shuffle=True),
         )
 
     def initialize_network(self):
