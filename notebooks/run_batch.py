@@ -1,8 +1,13 @@
+"""Change these for your setup"""
+path_SUPPORT = "/data/garfinkeljb/SUPPORT" # NO ENDING /
+path_vesselFM = "/vf/users/garfinkeljb/vesselFM" # NO ENDING /
+
+
 import sys
 from pathlib import Path
 import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
+os.chdir(f'{path_SUPPORT}/notebooks/')
 sys.path.insert(0, str(Path('./').resolve().parent.parent))
 
 import gc
@@ -15,43 +20,23 @@ from SUPPORT.utils.train_collection import TrainingClass
 from SUPPORT.utils.test_collection import TestingClass
 import shutil
 
-SCRIPT_PATH = Path(__file__).resolve()
-
-
-def _apply_int_override(params, key, env_name):
-    value = os.environ.get(env_name)
-    if value is None:
-        return
-    params[key] = int(value)
-
-
-def _single_path_env(overrides):
-    env = os.environ.copy()
-    for key, value in overrides.items():
-        env[key] = str(value)
-    return env
-
 def run_all(path):
-    os.chdir('/data/garfinkeljb/SUPPORT/notebooks/')
+    os.chdir(f'{path_SUPPORT}/notebooks/')
     in_path = path
     exp_name = None
-    dimensionality = "3D" # options: "2+1D" (planar + time), "3D" (static volumetric), or "3+1D" (volumetric + time)
-    segment = True
+    dimensionality = "2+1D" # options: "2+1D" (planar + time), "3D" (static volumetric), or "3+1D" (volumetric + time)
+    segment = False
     rm_dir = True # if True, do not preserve checkpoints (saves local storage memory)
 
     # personalization: one-time change, keep after initialization
     out_dir = None
     # node-dependent: change if deviating from typical node specs
-    n_cpu = 8
+    n_cpu = 16
     gpu = '0'
 
     with open('./parameters.json', 'r') as file: params = json.load(file)
     train_params = params[dimensionality]['train']
     test_params = params[dimensionality]['test']
-
-    _apply_int_override(test_params, 'batch_size', 'SUPPORT_TEST_BATCH_SIZE')
-    _apply_int_override(test_params, 'n_cpu', 'SUPPORT_TEST_N_CPU')
-    _apply_int_override(test_params, 'prefetch_factor', 'SUPPORT_TEST_PREFETCH_FACTOR')
 
     train_params['dimensionality'] = dimensionality
     train_params['rm_dir'] = rm_dir
@@ -113,7 +98,7 @@ def run_all(path):
         'll_channels':      train_params['ll_channels'],
         'unet_channels':    train_params['unet_channels'],
         'bs_size':          train_params['bs_size'],
-        'n_cpu':            test_params['n_cpu'],
+        'n_cpu':            train_params['n_cpu'],
         'prefetch_factor':  test_params['prefetch_factor'],
         'pad':              test_params['pad']
     }
@@ -146,74 +131,23 @@ def run_all(path):
                 "device=cuda:0",
             ],
             check=True,
-            cwd="/vf/users/garfinkeljb/vesselFM",
+            cwd=path_vesselFM,
             env=os.environ.copy(),
         )
     gc.collect()
     torch.cuda.empty_cache()
-    
-def cleanup_after_run(path):
-    try:
-        shutil.rmtree(f'/data/garfinkeljb/SUPPORT/notebooks/tmp/{str(Path(path).stem)}')
-    except Exception:
-        pass
-    try:
-        Path(path).unlink()
-    except Exception:
-        pass
 
 
-def run_batch(paths):
-    num_paths = len(paths)
-    retry_profiles = [
-        {},
-        {
-            "SUPPORT_TEST_BATCH_SIZE": 128,
-            "SUPPORT_TEST_N_CPU": 0,
-        },
-        {
-            "SUPPORT_TEST_BATCH_SIZE": 64,
-            "SUPPORT_TEST_N_CPU": 0,
-        },
-        {
-            "SUPPORT_TEST_BATCH_SIZE": 32,
-            "SUPPORT_TEST_N_CPU": 0,
-        },
-    ]
-    for i, path in enumerate(paths, start=1):
+noisy_data_dir = '/data/garfinkeljb/data_noisy/'
+
+paths = list(Path(noisy_data_dir).glob('*.tif'))
+paths = [str(path) for path in paths]
+num_paths = len(paths)
+for i,path in enumerate(paths):
+    if not Path(path).is_dir():
         print(f'Denoising {i} of {num_paths}')
-        success = False
-        for attempt, overrides in enumerate(retry_profiles, start=1):
-            if overrides:
-                print(f"Retrying with safer inference settings: {overrides}")
-            result = subprocess.run(
-                [sys.executable, str(SCRIPT_PATH), "--single-path", str(path)],
-                check=False,
-                cwd="/data/garfinkeljb/SUPPORT/notebooks/",
-                env=_single_path_env(overrides),
-            )
-            if result.returncode == 0:
-                success = True
-                break
-            if result.returncode != -9 or attempt == len(retry_profiles):
-                raise subprocess.CalledProcessError(
-                    result.returncode,
-                    [sys.executable, str(SCRIPT_PATH), "--single-path", str(path)],
-                )
-            print(f"Child process was killed with SIGKILL on attempt {attempt}.")
-            gc.collect()
-            torch.cuda.empty_cache()
-        if not success:
-            raise RuntimeError(f"Failed to process {path}")
-        cleanup_after_run(path)
-        gc.collect()
-        torch.cuda.empty_cache()
-
-
-if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "--single-path":
-        run_all(sys.argv[2])
-    else:
-        paths = list(Path('/data/garfinkeljb/data_noisy').glob('*.tif'))
-        paths = [str(path) for path in paths]
-        run_batch(paths)
+        run_all(path)
+        try: shutil.rmtree(f'{path_SUPPORT}/notebooks/tmp/{str(Path(path).stem)}')
+        except: pass
+        try: shutil.rmtree(path)
+        except: pass
