@@ -53,17 +53,33 @@ def normalize(image):
         mean_image: mean of the image stack (np.float)
         std_image: standard deviation of the image stack (np.float)
     """
-    max_image = torch.max(image)
-    min_image = torch.min(image)
-    image -= min_image
-    image /= (max_image - min_image)
     mean_image = torch.mean(image)
     std_image = torch.std(image)
+    if std_image == 0:
+        std_image = torch.ones_like(std_image)
 
     image -= mean_image
     image /= std_image
 
     return image, mean_image, std_image
+
+
+def image_stats(image):
+    if hasattr(image, "attrs") and "mean" in image.attrs and "std" in image.attrs:
+        mean_image = torch.tensor(image.attrs["mean"], dtype=torch.float32)
+        std_image = torch.tensor(image.attrs["std"], dtype=torch.float32)
+    elif isinstance(image, torch.Tensor):
+        mean_image = torch.mean(image.float())
+        std_image = torch.std(image.float())
+    else:
+        arr = np.asarray(image, dtype=np.float32)
+        mean_image = torch.tensor(np.mean(arr), dtype=torch.float32)
+        ddof = 1 if arr.size > 1 else 0
+        std_image = torch.tensor(np.std(arr, ddof=ddof), dtype=torch.float32)
+
+    if std_image == 0:
+        std_image = torch.ones_like(std_image)
+    return mean_image.float(), std_image.float()
 
 def get_coordinate(img_size, patch_size, patch_interval):
     """DeepCAD version of stitching
@@ -227,16 +243,22 @@ class DatasetSUPPORT(Dataset):
         self.noisy_imgs = noisy_imgs
         self.mean_images = []
         self.std_images = []
-        if load_to_memory:
-            for idx, noisy_img in enumerate(tqdm(noisy_imgs)):
+        for idx, noisy_img in enumerate(tqdm(noisy_imgs)):
+            if load_to_memory:
                 noisy_img, mean_image, std_image = normalize(noisy_img)
                 self.noisy_imgs[idx] = noisy_img
-                self.mean_images.append(mean_image)
-                self.std_images.append(std_image)
-            self.mean_images = torch.tensor(self.mean_images)
-            self.std_images = torch.tensor(self.std_images)
+            else:
+                mean_image, std_image = image_stats(noisy_img)
+            self.mean_images.append(mean_image.detach().cpu().float())
+            self.std_images.append(std_image.detach().cpu().float())
+
+        self.mean_images = torch.stack(self.mean_images) if self.mean_images else torch.empty(0)
+        self.std_images = torch.stack(self.std_images) if self.std_images else torch.empty(0)
+        if load_to_memory:
             print("Normalized noisy images and stored mean/std in memory.")
             #print(f"Mean: {self.mean_images}, Std: {self.std_images}")
+        else:
+            print("Stored mean/std for on-the-fly normalization.")
 
         # generate index
         self.indices_ds = []
@@ -319,15 +341,15 @@ class DatasetSUPPORT(Dataset):
             img_obj = self.noisy_imgs[ds_idx]
             # if on-disk object with attrs (e.g., zarr/tiff), use slicing and convert
             if hasattr(img_obj, "attrs"):
-                noisy_img = img_obj[t_range, y_range, z_range]
-                noisy_img = torch.tensor(noisy_img, dtype=torch.float32)
+                noisy_patch = img_obj[t_range, y_range, z_range]
+                noisy_img = torch.from_numpy(np.array(noisy_patch, dtype=np.float32, copy=True))
             else:
-                # handle in-memory torch.Tensor or numpy array
                 if isinstance(img_obj, torch.Tensor):
-                    full_img = img_obj
+                    noisy_img = img_obj[t_range, y_range, z_range].to(torch.float32)
                 else:
-                    full_img = torch.from_numpy(np.asarray(img_obj)).to(torch.float32)
-                noisy_img = full_img[t_range, y_range, z_range].to(torch.float32)
+                    noisy_patch = img_obj[t_range, y_range, z_range]
+                    noisy_img = torch.from_numpy(np.array(noisy_patch, dtype=np.float32, copy=True))
+            noisy_img = (noisy_img - self.mean_images[ds_idx]) / self.std_images[ds_idx]
         return noisy_img, torch.tensor([[t_idx, t_idx + self.patch_size[0]],\
             [y_idx, y_idx + self.patch_size[1]], [z_idx, z_idx + self.patch_size[2]]]), torch.tensor(ds_idx)
 
@@ -355,20 +377,13 @@ class DatasetSUPPORT_test_stitch(Dataset):
         self.transform = transform
         self.random_patch = random_patch
         self.patch_rng = np.random.default_rng(random_patch_seed)
+        if not isinstance(noisy_img, torch.Tensor):
+            noisy_img = torch.from_numpy(np.asarray(noisy_img, dtype=np.float32)).type(torch.FloatTensor)
+        else:
+            noisy_img = noisy_img.to(torch.float32)
         self.noisy_img = noisy_img
         self.load_to_memory = load_to_memory
-        # ensure dataset exposes mean_img and std_img for downstream code
-        try:
-            if isinstance(self.noisy_img, torch.Tensor):
-                self.mean_img = self.noisy_img.mean().float()
-                self.std_img = self.noisy_img.std().float()
-            else:
-                self.mean_img = torch.tensor(np.mean(self.noisy_img), dtype=torch.float32)
-                self.std_img = torch.tensor(np.std(self.noisy_img), dtype=torch.float32)
-        except Exception:
-            # fallback to scalar defaults
-            self.mean_img = torch.tensor(0.0, dtype=torch.float32)
-            self.std_img = torch.tensor(1.0, dtype=torch.float32)
+        self.noisy_img, self.mean_img, self.std_img = normalize(self.noisy_img)
 
         # generate index
         self.indices = []

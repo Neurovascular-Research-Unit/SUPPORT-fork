@@ -58,10 +58,12 @@ class TestingClass():
         self.prefetch_factor = 2
         
         # AUTOMATED
-        self.cuda = torch.cuda.is_available() and not self.use_cpu
-        self.device = "cuda" if self.cuda else "cpu"
+        self.cuda = False
+        self.device = "cpu"
         self.is_dir = False
         self.set_params(params_dict)
+        self.cuda = torch.cuda.is_available() and not self.use_cpu
+        self.device = "cuda" if self.cuda else "cpu"
 
     def _in_ipykernel(self):
         try:

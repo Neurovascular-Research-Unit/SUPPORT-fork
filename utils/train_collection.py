@@ -46,6 +46,7 @@ class TrainingClass():
         self.patch_size = [61, 128, 128]
         self.patch_interval = [1, 64, 64]
         self.batch_size = 16
+        self.load_to_memory = True
         
         # MODEL
         self.depth = 5
@@ -65,9 +66,12 @@ class TrainingClass():
         self.prefetch_factor = 2
         
         # AUTOMATED
-        self.cuda = torch.cuda.is_available() and not self.use_cpu
+        self.cuda = False
+        self.device = "cpu"
         self.is_dir = False 
         self.set_params(params_dict)
+        self.cuda = torch.cuda.is_available() and not self.use_cpu
+        self.device = "cuda" if self.cuda else "cpu"
 
     def _in_ipykernel(self):
         try:
@@ -153,8 +157,20 @@ class TrainingClass():
             pass
 
     def _read_stack(self, path):
+        if not self.load_to_memory:
+            try:
+                return tifffile.memmap(path)
+            except Exception:
+                pass
         noisy_img = tifffile.TiffFile(path).asarray()
-        return np.asarray(noisy_img, dtype=np.float32)
+        if self.load_to_memory:
+            return np.asarray(noisy_img, dtype=np.float32)
+        return np.asarray(noisy_img)
+
+    def _prepare_training_stack(self, noisy_img):
+        if self.load_to_memory:
+            return torch.from_numpy(np.ascontiguousarray(noisy_img, dtype=np.float32)).type(torch.FloatTensor)
+        return noisy_img
 
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":
@@ -184,11 +200,11 @@ class TrainingClass():
         if self.dimensionality == "3+1D":
             if noisy_img.ndim == 4:
                 return [
-                    torch.from_numpy(np.ascontiguousarray(noisy_img[:, z_idx, :, :])).type(torch.FloatTensor)
+                    self._prepare_training_stack(noisy_img[:, z_idx, :, :])
                     for z_idx in range(noisy_img.shape[1])
                 ]
             if noisy_img.ndim == 3:
-                return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
+                return [self._prepare_training_stack(noisy_img)]
             raise ValueError(f"Expected a 3D or 4D TIFF for 3+1D input, received shape {noisy_img.shape}.")
 
         if self.dimensionality in ("2+1D", "3D"):
@@ -196,13 +212,13 @@ class TrainingClass():
                 raise ValueError(
                     f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
                 )
-            return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
+            return [self._prepare_training_stack(noisy_img)]
 
         if noisy_img.ndim != 3:
             raise ValueError(
                 f"Expected a 3D TIFF for {self.dimensionality} input, received shape {noisy_img.shape}."
             )
-        return [torch.from_numpy(noisy_img).type(torch.FloatTensor)]
+        return [self._prepare_training_stack(noisy_img)]
 
     def generate_dataloader(self):
         """
@@ -228,7 +244,7 @@ class TrainingClass():
             patch_interval=self.patch_interval,
             transform=None,
             random_patch=True,
-            load_to_memory=False
+            load_to_memory=self.load_to_memory
         )
         
         self.dataloader = DataLoader(
@@ -263,7 +279,7 @@ class TrainingClass():
         self.optimizer = torch.optim.Adam(self.local_model.parameters(), lr=self.lr)
         if self.cuda: self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
         else: self.scaler = torch.amp.GradScaler('cpu', enabled=self.use_amp)
-        if self.cuda: self.local_model = self.local_model.cuda()
+        self.local_model = self.local_model.to(self.device)
         random.seed(0)
         torch.manual_seed(self.rnd_seed)
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.Tensor
@@ -301,7 +317,7 @@ class TrainingClass():
             for i, data in enumerate(pbar):
                 (noisy_img, _, ds_idx) = data
                 B, T, X, Y = noisy_img.shape
-                noisy_img = noisy_img.cuda()
+                noisy_img = noisy_img.to(self.device)
                 noisy_img, _ = random_transform(
                     input=noisy_img, 
                     target=None, 
@@ -312,7 +328,7 @@ class TrainingClass():
                 self.optimizer.zero_grad()
                 
                 # Forward pass wrapped in autocast for AMP
-                with torch.amp.autocast('cuda', enabled=self.use_amp):
+                with torch.amp.autocast(self.device, enabled=self.use_amp):
                     denoised_img = self.local_model(noisy_img)
                     loss_L1_pixelwise = L1_pixelwise(denoised_img, noisy_img_target)
                     loss_L2_pixelwise = L2_pixelwise(denoised_img, noisy_img_target)
