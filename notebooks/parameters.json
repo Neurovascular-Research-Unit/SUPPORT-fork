@@ -4,9 +4,9 @@
       "n_epochs": 10,
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
-      "batch_size": 128,
+      "batch_size": 256,
       "load_to_memory": true,
-      "prefetch_factor": 1,
+      "prefetch_factor": 8,
       "lr": 5e-4,
       "depth": 5,
       "bc_channels": 64,
@@ -21,7 +21,7 @@
     "test": {
       "patch_interval": [1, 24, 24],
       "batch_size": 256,
-      "prefetch_factor": 32,
+      "prefetch_factor": 8,
       "pad": true
     }
   },
@@ -58,8 +58,8 @@
       "patch_interval": [1, 64, 64],
       "batch_size": 256,
       "load_to_memory": true,
-      "prefetch_factor": 6,
-      "lr": 5e-4,
+      "prefetch_factor": 8,
+      "lr": 1e-4,
       "depth": 5,
       "bc_channels": 64,
       "obo_channels": [32, 16],
@@ -71,9 +71,9 @@
       "use_amp": true
     },
     "test": {
-      "patch_interval": [1, 32, 32],
+      "patch_interval": [1, 24, 24],
       "batch_size": 256,
-      "prefetch_factor": 1,
+      "prefetch_factor": 8,
       "pad": "True"
     }
   }
