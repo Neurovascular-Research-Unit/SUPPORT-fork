@@ -51,31 +51,7 @@ def run_all(path):
     train_params['checkpoints'] = checkpoints
     train_params['resume'] = resume
     train_params['rm_intermediaries'] = rm_intermediaries
-    train_dict = {
-        'in_path': train_params['in_path'],
-        'exp_name': train_params['exp_name'],
-        'out_dir': train_params['out_dir'],
-        'dimensionality': train_params['dimensionality'],
-        'rm_dir': train_params['rm_dir'],
-        'checkpoints': train_params['checkpoints'],
-        'resume': train_params['resume'],
-        'rm_intermediaries': train_params['rm_intermediaries'],
-        'n_epochs': train_params['n_epochs'],
-        'cuda_device': train_params['cuda_device'],
-        'patch_size':train_params['patch_size'],
-        'patch_interval':train_params['patch_interval'],
-        'batch_size': train_params['batch_size'],
-        'depth': train_params['depth'],
-        'bc_channels': train_params['bc_channels'],
-        'obo_channels': train_params['obo_channels'],
-        'll_channels': train_params['ll_channels'],
-        'unet_channels': train_params['unet_channels'],
-        'bs_size': train_params['bs_size'],
-        'lr': train_params['lr'],
-        'loss_coef': train_params['loss_coef'],
-        'n_cpu': train_params['n_cpu'],
-        'prefetch_factor': train_params['prefetch_factor']
-    }
+    train_dict = dict(train_params)
     train_cd = TrainingClass(train_dict)
     train_cd.vars_dict()
     try:
@@ -155,7 +131,5 @@ for i,path in enumerate(paths):
     if not Path(path).is_dir():
         print(f'Denoising {i} of {num_paths}')
         run_all(path)
-        try: shutil.rmtree(f'{path_SUPPORT}/notebooks/tmp/{str(Path(path).stem)}')
-        except: pass
         try: shutil.rmtree(path)
         except: pass

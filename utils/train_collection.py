@@ -46,7 +46,7 @@ class TrainingClass():
         self.checkpoints = False
         self.resume = False
         self.rm_intermediaries = False
-        # Backward-compatible alias used by the standalone run.py added earlier.
+        # Backward-compatible alias for callers that used the earlier API.
         self.save_every_epoch = False
         self.rnd_seed = 0
         self.cuda_device = [0]
@@ -324,6 +324,9 @@ class TrainingClass():
             "scaler": checkpoint_dir / f"scaler_{epoch}.pth",
         }
 
+    def _checkpoint_incomplete_path(self, epoch):
+        return Path(self.pth_dir) / f".checkpoint_{epoch}.incomplete"
+
     def _required_checkpoint_paths(self, epoch):
         paths = self._checkpoint_paths(epoch)
         required = [paths["model"], paths["optimizer"]]
@@ -332,7 +335,7 @@ class TrainingClass():
         return paths, required
 
     def _find_latest_complete_checkpoint(self):
-        """Return the newest epoch with all state required for exact continuation."""
+        """Return the newest complete model/optimizer/(optional) scaler bundle."""
         checkpoint_epochs = []
         model_pattern = re.compile(r"^model_(\d+)\.pth$")
         for model_path in Path(self.pth_dir).iterdir():
@@ -340,10 +343,28 @@ class TrainingClass():
             if match is None:
                 continue
             epoch = int(match.group(1))
+            if self._checkpoint_incomplete_path(epoch).is_file():
+                continue
             _, required = self._required_checkpoint_paths(epoch)
             if all(path.is_file() for path in required):
                 checkpoint_epochs.append(epoch)
         return max(checkpoint_epochs) if checkpoint_epochs else None
+
+    def _find_latest_legacy_checkpoint(self):
+        """Find the newest one-based, model-only checkpoint from older notebooks."""
+        latest = None
+        model_pattern = re.compile(r"^model(\d+)\.pth$")
+        for model_path in Path(self.pth_dir).iterdir():
+            match = model_pattern.fullmatch(model_path.name)
+            if match is None:
+                continue
+            completed_epochs = int(match.group(1))
+            if completed_epochs < 1:
+                continue
+            epoch = completed_epochs - 1
+            if latest is None or epoch > latest[0]:
+                latest = (epoch, model_path)
+        return latest
 
     def _load_state_dict(self, path):
         """Load a state dict on the selected device across supported torch versions."""
@@ -360,6 +381,24 @@ class TrainingClass():
         """
         if self.resume:
             checkpoint_epoch = self._find_latest_complete_checkpoint()
+            legacy_checkpoint = self._find_latest_legacy_checkpoint()
+            if (
+                legacy_checkpoint is not None
+                and (checkpoint_epoch is None or legacy_checkpoint[0] > checkpoint_epoch)
+            ):
+                checkpoint_epoch, legacy_model_path = legacy_checkpoint
+                self.local_model.load_state_dict(
+                    self._load_state_dict(legacy_model_path)
+                )
+                self.epoch = checkpoint_epoch + 1
+                self.latest_checkpoint_epoch = checkpoint_epoch
+                self.model_path = str(legacy_model_path)
+                print(
+                    f"Loaded legacy model-only checkpoint {legacy_model_path.name}; "
+                    f"training will continue at epoch {self.epoch} with a newly "
+                    "initialized optimizer and AMP scaler"
+                )
+                return
             if checkpoint_epoch is None:
                 self.epoch = 0
                 print("No complete checkpoint found; starting training from scratch")
@@ -371,6 +410,12 @@ class TrainingClass():
             checkpoint_epoch = self.epoch - 1
 
         paths, required = self._required_checkpoint_paths(checkpoint_epoch)
+        incomplete_path = self._checkpoint_incomplete_path(checkpoint_epoch)
+        if incomplete_path.is_file():
+            raise RuntimeError(
+                f"Cannot resume from epoch {checkpoint_epoch}; its checkpoint "
+                "bundle is marked incomplete"
+            )
         missing = [str(path) for path in required if not path.is_file()]
         if missing:
             raise FileNotFoundError(
@@ -406,22 +451,31 @@ class TrainingClass():
     def _remove_intermediary_checkpoints(self, keep_epoch):
         checkpoint_pattern = re.compile(r"^(model|optimizer|scaler)_(\d+)\.pth$")
         legacy_model_pattern = re.compile(r"^model\d+\.pth$")
+        incomplete_pattern = re.compile(r"^\.checkpoint_(\d+)\.incomplete$")
         for path in Path(self.pth_dir).iterdir():
             match = checkpoint_pattern.fullmatch(path.name)
             remove = match is not None and int(match.group(2)) != keep_epoch
             remove = remove or legacy_model_pattern.fullmatch(path.name) is not None
+            incomplete_match = incomplete_pattern.fullmatch(path.name)
+            remove = remove or (
+                incomplete_match is not None
+                and int(incomplete_match.group(1)) != keep_epoch
+            )
             if remove:
                 path.unlink()
 
     def save_checkpoint(self, epoch):
         """Save model, optimizer, and optional AMP state for a completed epoch."""
         paths = self._checkpoint_paths(epoch)
+        incomplete_path = self._checkpoint_incomplete_path(epoch)
+        incomplete_path.touch(exist_ok=True)
         self._atomic_torch_save(self.local_model.state_dict(), paths["model"])
         self._atomic_torch_save(self.optimizer.state_dict(), paths["optimizer"])
         if self.use_amp:
             self._atomic_torch_save(self.scaler.state_dict(), paths["scaler"])
         elif paths["scaler"].is_file():
             paths["scaler"].unlink()
+        incomplete_path.unlink()
 
         self.latest_checkpoint_epoch = epoch
         self.model_path = str(paths["model"])
