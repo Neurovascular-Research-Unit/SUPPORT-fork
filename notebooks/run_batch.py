@@ -26,7 +26,10 @@ def run_all(path):
     exp_name = None
     dimensionality = "2+1D" # options: "2+1D" (planar + time), "3D" (static volumetric), or "3+1D" (volumetric + time)
     segment = False
-    rm_dir = True # if True, do not preserve checkpoints (saves local storage memory)
+    rm_dir = True # if True, store training artifacts under notebooks/tmp
+    checkpoints = True
+    resume = True
+    rm_intermediaries = True
 
     # personalization: one-time change, keep after initialization
     out_dir = None
@@ -45,12 +48,18 @@ def run_all(path):
     train_params['cuda_device'] = gpu
     train_params['in_path'] = in_path
     train_params['exp_name'] = exp_name
+    train_params['checkpoints'] = checkpoints
+    train_params['resume'] = resume
+    train_params['rm_intermediaries'] = rm_intermediaries
     train_dict = {
         'in_path': train_params['in_path'],
         'exp_name': train_params['exp_name'],
         'out_dir': train_params['out_dir'],
         'dimensionality': train_params['dimensionality'],
         'rm_dir': train_params['rm_dir'],
+        'checkpoints': train_params['checkpoints'],
+        'resume': train_params['resume'],
+        'rm_intermediaries': train_params['rm_intermediaries'],
         'n_epochs': train_params['n_epochs'],
         'cuda_device': train_params['cuda_device'],
         'patch_size':train_params['patch_size'],
@@ -72,8 +81,7 @@ def run_all(path):
     try:
         train_cd.run()
 
-        epoch = vars(train_cd)['n_epochs']
-        model_path = vars(train_cd)['pth_dir'] + f'/model{epoch:03d}.pth'
+        model_path = str(train_cd.model_path)
         test_params['model_path'] = model_path.replace('/vf/users', '/data')
         test_params['out_dir'] = vars(train_cd)['out_dir'].replace('/vf/users', '/data')
         test_params['exp_name'] = vars(train_cd)['exp_name']

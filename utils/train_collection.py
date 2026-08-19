@@ -2,6 +2,9 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import os
+import re
+import tempfile
 import numpy as np
 import tifffile
 import torch
@@ -39,6 +42,12 @@ class TrainingClass():
         self.dimensionality = None
         self.rm_dir = True
         self.n_epochs = 500
+        self.epoch = 0
+        self.checkpoints = False
+        self.resume = False
+        self.rm_intermediaries = False
+        # Backward-compatible alias used by the standalone run.py added earlier.
+        self.save_every_epoch = False
         self.rnd_seed = 0
         self.cuda_device = [0]
         
@@ -68,8 +77,20 @@ class TrainingClass():
         # AUTOMATED
         self.cuda = False
         self.device = "cpu"
-        self.is_dir = False 
+        self.is_dir = False
+        self.model_path = None
+        self.latest_checkpoint_epoch = None
+        self._checkpoint_controls_configured = any(
+            key in params_dict
+            for key in ("checkpoints", "resume", "rm_intermediaries", "save_every_epoch")
+        )
+        checkpoints_was_set = "checkpoints" in params_dict
         self.set_params(params_dict)
+        if not checkpoints_was_set and self.save_every_epoch:
+            self.checkpoints = True
+        for option in ("checkpoints", "resume", "rm_intermediaries"):
+            if type(getattr(self, option)) is not bool:
+                raise TypeError(f"{option} must be True or False")
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.device = "cuda" if self.cuda else "cpu"
 
@@ -123,6 +144,7 @@ class TrainingClass():
         self.generate_dataloader()
         self.initialize_network()
         self.initialize_optimizer()
+        self.load_checkpoint()
         self.test()
 
     def set_params(self, params_dict):
@@ -135,6 +157,8 @@ class TrainingClass():
         if Path(self.in_path).is_dir(): self.is_dir = True
 
     def prepare_file(self):
+        if getattr(self, "_files_prepared", False):
+            return
         if self.exp_name is None: self.exp_name = Path(self.in_path).stem
         self.cwd = str(Path("./").absolute())
         if self.out_dir is None: self.out_dir = self.cwd + '/outputs'
@@ -147,14 +171,15 @@ class TrainingClass():
             self.out_dir += f'/{self.exp_name}'
             self.pth_dir = self.out_dir + '/pth'
             self.onnx_dir = self.out_dir + '/onnx'
-        if not Path(self.out_dir).exists(): Path(self.out_dir).mkdir()
-        if not Path(self.pth_dir).exists(): Path(self.pth_dir).mkdir()
-        if not Path(self.onnx_dir).exists(): Path(self.onnx_dir).mkdir()
+        if not Path(self.out_dir).exists(): Path(self.out_dir).mkdir(parents=True)
+        if not Path(self.pth_dir).exists(): Path(self.pth_dir).mkdir(parents=True)
+        if not Path(self.onnx_dir).exists(): Path(self.onnx_dir).mkdir(parents=True)
         try:
             self.log = LogManager(self, mode="train", out_dir=self.out_dir, filename_prefix=self.exp_name)
             self.log.log_params()
         except Exception:
             pass
+        self._files_prepared = True
 
     def _read_stack(self, path):
         if not self.load_to_memory:
@@ -226,7 +251,13 @@ class TrainingClass():
         """
         noisy_imgs = []
         print("\033[1;31mLoaded Files -----> \033[0m")
-        noisy_paths = list(Path(self.in_path).glob('*.tif')) if self.is_dir else [Path(self.in_path)]
+        if self.is_dir:
+            noisy_paths = [
+                path for path in Path(self.in_path).iterdir()
+                if path.is_file() and path.suffix.lower() in ('.tif', '.tiff')
+            ]
+        else:
+            noisy_paths = [Path(self.in_path)]
         noisy_paths = sorted(noisy_paths)
         if len(noisy_paths) == 0:
             raise FileNotFoundError(f'No TIFF files were found in {self.in_path}.')
@@ -284,6 +315,118 @@ class TrainingClass():
         torch.manual_seed(self.rnd_seed)
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.Tensor
         self.rng = np.random.default_rng(self.rnd_seed)
+
+    def _checkpoint_paths(self, epoch):
+        checkpoint_dir = Path(self.pth_dir)
+        return {
+            "model": checkpoint_dir / f"model_{epoch}.pth",
+            "optimizer": checkpoint_dir / f"optimizer_{epoch}.pth",
+            "scaler": checkpoint_dir / f"scaler_{epoch}.pth",
+        }
+
+    def _required_checkpoint_paths(self, epoch):
+        paths = self._checkpoint_paths(epoch)
+        required = [paths["model"], paths["optimizer"]]
+        if self.use_amp:
+            required.append(paths["scaler"])
+        return paths, required
+
+    def _find_latest_complete_checkpoint(self):
+        """Return the newest epoch with all state required for exact continuation."""
+        checkpoint_epochs = []
+        model_pattern = re.compile(r"^model_(\d+)\.pth$")
+        for model_path in Path(self.pth_dir).iterdir():
+            match = model_pattern.fullmatch(model_path.name)
+            if match is None:
+                continue
+            epoch = int(match.group(1))
+            _, required = self._required_checkpoint_paths(epoch)
+            if all(path.is_file() for path in required):
+                checkpoint_epochs.append(epoch)
+        return max(checkpoint_epochs) if checkpoint_epochs else None
+
+    def _load_state_dict(self, path):
+        """Load a state dict on the selected device across supported torch versions."""
+        try:
+            return torch.load(path, map_location=self.device, weights_only=True)
+        except TypeError:
+            return torch.load(path, map_location=self.device)
+
+    def load_checkpoint(self):
+        """Restore an automatic or explicitly selected checkpoint.
+
+        Automatic resume selects the newest complete state bundle. The explicit
+        ``epoch=N`` path retains the original SUPPORT contract and loads N-1.
+        """
+        if self.resume:
+            checkpoint_epoch = self._find_latest_complete_checkpoint()
+            if checkpoint_epoch is None:
+                self.epoch = 0
+                print("No complete checkpoint found; starting training from scratch")
+                return
+            self.epoch = checkpoint_epoch + 1
+        else:
+            if self.epoch == 0:
+                return
+            checkpoint_epoch = self.epoch - 1
+
+        paths, required = self._required_checkpoint_paths(checkpoint_epoch)
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "Cannot resume at epoch "
+                f"{self.epoch}; missing checkpoint file(s): {', '.join(missing)}"
+            )
+
+        self.local_model.load_state_dict(self._load_state_dict(paths["model"]))
+        self.optimizer.load_state_dict(self._load_state_dict(paths["optimizer"]))
+        if self.use_amp:
+            self.scaler.load_state_dict(self._load_state_dict(paths["scaler"]))
+        self.latest_checkpoint_epoch = checkpoint_epoch
+        self.model_path = str(paths["model"])
+        print(
+            f"Loaded checkpoint from epoch {checkpoint_epoch}; "
+            f"training will continue at epoch {self.epoch}"
+        )
+
+    def _atomic_torch_save(self, state, destination):
+        destination = Path(destination)
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+        )
+        os.close(file_descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            torch.save(state, temporary_path)
+            os.replace(temporary_path, destination)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    def _remove_intermediary_checkpoints(self, keep_epoch):
+        checkpoint_pattern = re.compile(r"^(model|optimizer|scaler)_(\d+)\.pth$")
+        legacy_model_pattern = re.compile(r"^model\d+\.pth$")
+        for path in Path(self.pth_dir).iterdir():
+            match = checkpoint_pattern.fullmatch(path.name)
+            remove = match is not None and int(match.group(2)) != keep_epoch
+            remove = remove or legacy_model_pattern.fullmatch(path.name) is not None
+            if remove:
+                path.unlink()
+
+    def save_checkpoint(self, epoch):
+        """Save model, optimizer, and optional AMP state for a completed epoch."""
+        paths = self._checkpoint_paths(epoch)
+        self._atomic_torch_save(self.local_model.state_dict(), paths["model"])
+        self._atomic_torch_save(self.optimizer.state_dict(), paths["optimizer"])
+        if self.use_amp:
+            self._atomic_torch_save(self.scaler.state_dict(), paths["scaler"])
+        elif paths["scaler"].is_file():
+            paths["scaler"].unlink()
+
+        self.latest_checkpoint_epoch = epoch
+        self.model_path = str(paths["model"])
+        if self.rm_intermediaries:
+            self._remove_intermediary_checkpoints(keep_epoch=epoch)
         
 
     def train(self):
@@ -361,7 +504,8 @@ class TrainingClass():
         lh = []
         clear_epochs_interval = 10
         clear_epochs = np.arange(clear_epochs_interval, 100, clear_epochs_interval)
-        for epoch in range(self.n_epochs):
+        start_epoch = self.epoch
+        for epoch in range(start_epoch, self.n_epochs):
             self.epoch = epoch
             self.dataloader.dataset.precompute_indices()
             self.train()
@@ -376,6 +520,19 @@ class TrainingClass():
                     self.log.append_loss(epoch, loss_total=L_mean, loss_l1=L1_mean, loss_l2=L2_mean)
                 except Exception:
                     pass
-            if epoch == self.n_epochs or epoch == self.n_epochs-1: torch.save(self.local_model.state_dict(), self.pth_dir + f'/model{epoch+1:03d}.pth')
+            if self.checkpoints:
+                self.save_checkpoint(epoch)
+            elif self._checkpoint_controls_configured and epoch == self.n_epochs - 1:
+                # New checkpoint controls save a complete final bundle for inference
+                # and for later continuation, even when per-epoch saves are disabled.
+                self.save_checkpoint(epoch)
+            # Preserve the final-model convention used by legacy callers.
+            elif epoch == self.n_epochs - 1:
+                legacy_model_path = Path(self.pth_dir) / f'model{epoch+1:03d}.pth'
+                self._atomic_torch_save(
+                    self.local_model.state_dict(),
+                    legacy_model_path,
+                )
+                self.model_path = str(legacy_model_path)
             if epoch in clear_epochs:
                 clear_output(wait=True)

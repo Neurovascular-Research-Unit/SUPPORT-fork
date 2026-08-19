@@ -39,6 +39,70 @@ conda activate SUPPORT
 python -m ipykernel install --user --name SUPPORT --display-name "SUPPORT"
 ```
 
+## Training One Model from a Directory
+
+The root-level `run.py` trains one generalized model from every top-level `.tif`
+or `.tiff` stack in a single directory. It is train-only, has no hard-coded
+filesystem paths, and always preserves its checkpoints.
+
+```bash
+python -u run.py \
+  --in-path /path/to/training_stacks \
+  --out-dir /path/to/model_outputs \
+  --exp-name generalized \
+  --dimensionality "2+1D" \
+  --n-epochs 100
+```
+
+The model, Adam optimizer, and (when AMP is enabled) AMP scaler are saved after
+every completed epoch in:
+
+```text
+/path/to/model_outputs/generalized/pth/
+├── model_0.pth
+├── optimizer_0.pth
+├── scaler_0.pth
+└── ...
+```
+
+Checkpoint numbering and continuation match the original NICALab trainer. Epochs
+are zero-based. To continue after epoch 36 completed, pass `--epoch 37`; this
+loads `model_36.pth`, `optimizer_36.pth`, and `scaler_36.pth`, then continues at
+epoch 37:
+
+```bash
+python -u run.py \
+  --in-path /path/to/training_stacks \
+  --out-dir /path/to/model_outputs \
+  --exp-name generalized \
+  --dimensionality "2+1D" \
+  --n-epochs 100 \
+  --epoch 37
+```
+
+`--n-epochs` is the final total, not the number of additional epochs. A job that
+stops during an epoch resumes from the last completed epoch and repeats the
+interrupted epoch. Use the same model parameters and AMP setting when resuming.
+Run `python run.py --help` for runtime overrides including batch size, patch size,
+worker count, prefetching, and memory mapping. For large directory datasets,
+consider `--no-load-to-memory` and a modest `--prefetch-factor`.
+
+### Biowulf batch example
+
+An editable template is provided at `scripts/biowulf_train.sbatch`. After
+adjusting its repository, input, output, environment, GPU, memory, and time
+settings, submit it with:
+
+```bash
+sbatch scripts/biowulf_train.sbatch
+```
+
+To resume the template after `model_36.pth`, submit it with
+`sbatch --export=ALL,START_EPOCH=37 scripts/biowulf_train.sbatch`.
+
+Slurm sets `CUDA_VISIBLE_DEVICES`; `run.py` intentionally leaves that allocation
+unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
+
 ## Running the Notebook
 
 ### Step-by-Step Instructions
@@ -74,8 +138,16 @@ python -m ipykernel install --user --name SUPPORT --display-name "SUPPORT"
    in_path = "/path/to/your/noisy_data"  # Path to your input data
    exp_name = None  # Optional: name for your experiment
    dimensionality = "3+1D"  # Options: "2+1D", "3D", or "3+1D"
-   rm_dir = True  # Whether to remove checkpoints after training
+   rm_dir = True  # Store training artifacts under notebooks/tmp
+   checkpoints = True  # Save a resumable checkpoint after every epoch
+   resume = True  # Automatically continue from the latest complete checkpoint
+   rm_intermediaries = True  # Keep only the latest checkpoint bundle
    ```
+
+   A checkpoint bundle contains the model, optimizer, and AMP scaler when AMP is
+   enabled. If `resume` is enabled but no complete bundle exists, training starts
+   from epoch 0. When `checkpoints` is disabled, one final bundle is still saved
+   for testing and possible later continuation.
 
    In the third code cell (fourth cell overall), you can adjust system-specific parameters:
 
@@ -109,7 +181,7 @@ python -m ipykernel install --user --name SUPPORT --display-name "SUPPORT"
    - Models are saved as checkpoints during training
 
 9. **View results**:
-   - After testing, the denoised/enhanced images will be saved in the output directory
+   - After testing, denoised/enhanced TIFFs are saved with `_SPRT.tif` appended to their stem
    - The output path is determined by `out_dir` and `exp_name` parameters
 
 ## Troubleshooting
