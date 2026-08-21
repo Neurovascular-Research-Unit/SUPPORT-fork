@@ -76,6 +76,7 @@ def run_all(path):
         'patch_size':       train_params['patch_size'],
         'patch_interval':   test_params['patch_interval'],
         'batch_size':       test_params['batch_size'],
+        'pin_memory':       test_params.get('pin_memory', True),
         'depth':            train_params['depth'],
         'bc_channels':      train_params['bc_channels'],
         'obo_channels':     train_params['obo_channels'],

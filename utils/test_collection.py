@@ -42,6 +42,7 @@ class TestingClass():
         self.patch_size = [61, 128, 128]
         self.patch_interval = [1, 11, 11]
         self.batch_size = 16
+        self.pin_memory = True
         
         # MODEL
         self.depth = 5
@@ -62,6 +63,8 @@ class TestingClass():
         self.device = "cpu"
         self.is_dir = False
         self.set_params(params_dict)
+        if type(self.pin_memory) is not bool:
+            raise TypeError("pin_memory must be True or False")
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.device = "cuda" if self.cuda else "cpu"
 
@@ -81,7 +84,7 @@ class TestingClass():
         kwargs = {
             "batch_size": self.batch_size,
             "num_workers": num_workers,
-            "pin_memory": self.cuda,
+            "pin_memory": self.cuda and self.pin_memory,
         }
         if num_workers > 0:
             kwargs["prefetch_factor"] = self.prefetch_factor

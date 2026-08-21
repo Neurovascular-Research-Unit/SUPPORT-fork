@@ -5,7 +5,8 @@
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 256,
-      "load_to_memory": true,
+      "load_to_memory": false,
+      "pin_memory": false,
       "prefetch_factor": 8,
       "lr": 5e-4,
       "depth": 5,
@@ -21,6 +22,7 @@
     "test": {
       "patch_interval": [1, 24, 24],
       "batch_size": 256,
+      "pin_memory": false,
       "prefetch_factor": 8,
       "pad": true
     }
@@ -32,6 +34,7 @@
       "patch_interval": [1, 64, 64],
       "batch_size": 64,
       "load_to_memory": false,
+      "pin_memory": false,
       "prefetch_factor": 4,
       "lr": 1e-4,
       "depth": 5,
@@ -47,6 +50,7 @@
     "test": {
       "patch_interval": [1, 16, 16],
       "batch_size": 256,
+      "pin_memory": false,
       "prefetch_factor": 4,
       "pad": true
     }
@@ -57,7 +61,8 @@
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 256,
-      "load_to_memory": true,
+      "load_to_memory": false,
+      "pin_memory": false,
       "prefetch_factor": 8,
       "lr": 1e-4,
       "depth": 5,
@@ -73,6 +78,7 @@
     "test": {
       "patch_interval": [1, 24, 24],
       "batch_size": 256,
+      "pin_memory": false,
       "prefetch_factor": 8,
       "pad": "True"
     }

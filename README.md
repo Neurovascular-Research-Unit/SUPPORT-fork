@@ -166,8 +166,9 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
    `.tiff` files, including files in nested subdirectories. Only `test_dir` is
    passed to the **Test** cells for denoising; the training directory is not
    denoised automatically. Leave `test_dir = None` for a train-only run. This
-   mode loads `gen_parameters.json`, which currently has exactly the same values
-   as `parameters.json` but can be adjusted independently later. Generalized
+   mode loads `gen_parameters.json`. Its defaults memory-map TIFF data and leave
+   DataLoader page-locking disabled so a multi-file corpus does not require a
+   second large in-memory representation or pinned batch copy. Generalized
    testing names a single-file result from the TIFF stem and a legacy 3+1D
    directory result from the test directory name. Before training, generalized
    mode computes one voxel-weighted mean and sample standard deviation across
@@ -254,6 +255,8 @@ If you run out of memory:
 
 - Reduce the `batch_size` in the parameters
 - Reduce the `patch_size` in the parameters
+- Set `load_to_memory` to `false` for a multi-file training corpus
+- Set `pin_memory` to `false` if page-locked DataLoader batches fail
 - Close other applications using GPU memory
 
 ### Import Errors

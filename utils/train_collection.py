@@ -57,6 +57,7 @@ class TrainingClass():
         self.patch_interval = [1, 64, 64]
         self.batch_size = 16
         self.load_to_memory = True
+        self.pin_memory = True
         
         # MODEL
         self.depth = 5
@@ -94,7 +95,13 @@ class TrainingClass():
         self.set_params(params_dict)
         if not checkpoints_was_set and self.save_every_epoch:
             self.checkpoints = True
-        for option in ("checkpoints", "resume", "rm_intermediaries", "train_gen"):
+        for option in (
+            "checkpoints",
+            "resume",
+            "rm_intermediaries",
+            "train_gen",
+            "pin_memory",
+        ):
             if type(getattr(self, option)) is not bool:
                 raise TypeError(f"{option} must be True or False")
         if self.train_gen and not self.is_dir:
@@ -118,7 +125,7 @@ class TrainingClass():
             "batch_size": self.batch_size,
             "shuffle": shuffle,
             "num_workers": num_workers,
-            "pin_memory": self.cuda,
+            "pin_memory": self.cuda and self.pin_memory,
         }
         if num_workers > 0:
             kwargs["prefetch_factor"] = self.prefetch_factor
