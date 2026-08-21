@@ -1,7 +1,7 @@
 {
   "3+1D": {
     "train": {
-      "n_epochs": 10,
+      "n_epochs": 500,
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 256,
@@ -27,7 +27,7 @@
   },
   "3D": {
     "train": {
-      "n_epochs": 50,
+      "n_epochs": 500,
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 64,
@@ -53,7 +53,7 @@
   },
   "2+1D": {
     "train": {
-      "n_epochs": 10,
+      "n_epochs": 500,
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 256,
