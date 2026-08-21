@@ -82,6 +82,10 @@ class TrainingClass():
         self.model_path = None
         self.latest_checkpoint_epoch = None
         self.latest_checkpoint_batch = None
+        self.normalization_scope = "per_stack"
+        self.normalization_mean = None
+        self.normalization_std = None
+        self.normalization_voxel_count = None
         self._checkpoint_controls_configured = any(
             key in params_dict
             for key in ("checkpoints", "resume", "rm_intermediaries", "save_every_epoch")
@@ -95,6 +99,7 @@ class TrainingClass():
                 raise TypeError(f"{option} must be True or False")
         if self.train_gen and not self.is_dir:
             raise ValueError("train_gen requires in_path to be a directory")
+        self.normalization_scope = "dataset" if self.train_gen else "per_stack"
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.device = "cuda" if self.cuda else "cpu"
 
@@ -285,8 +290,23 @@ class TrainingClass():
             patch_interval=self.patch_interval,
             transform=None,
             random_patch=True,
-            load_to_memory=self.load_to_memory
+            load_to_memory=self.load_to_memory,
+            normalize_across_images=self.train_gen,
         )
+        if self.train_gen:
+            self.normalization_scope = "dataset"
+            self.normalization_mean = float(dataset.dataset_mean.item())
+            self.normalization_std = float(dataset.dataset_std.item())
+            self.normalization_voxel_count = int(dataset.dataset_count)
+            diagnostic = (
+                "Global training normalization: "
+                f"voxels={self.normalization_voxel_count} "
+                f"mean={self.normalization_mean} "
+                f"std={self.normalization_std} correction=1"
+            )
+            print(diagnostic)
+            if hasattr(self, "log"):
+                self.log.log_diagnostic(diagnostic)
         
         self.dataloader = DataLoader(
             dataset=dataset,

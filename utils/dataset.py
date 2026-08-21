@@ -54,8 +54,12 @@ def normalize(image):
         std_image: standard deviation of the image stack (np.float)
     """
     mean_image = torch.mean(image)
-    std_image = torch.std(image)
-    if std_image == 0:
+    std_image = (
+        torch.ones_like(mean_image)
+        if image.numel() <= 1
+        else torch.std(image)
+    )
+    if not torch.isfinite(std_image) or std_image == 0:
         std_image = torch.ones_like(std_image)
 
     image -= mean_image
@@ -70,16 +74,115 @@ def image_stats(image):
         std_image = torch.tensor(image.attrs["std"], dtype=torch.float32)
     elif isinstance(image, torch.Tensor):
         mean_image = torch.mean(image.float())
-        std_image = torch.std(image.float())
+        std_image = (
+            torch.ones_like(mean_image)
+            if image.numel() <= 1
+            else torch.std(image.float())
+        )
     else:
         arr = np.asarray(image, dtype=np.float32)
         mean_image = torch.tensor(np.mean(arr), dtype=torch.float32)
         ddof = 1 if arr.size > 1 else 0
         std_image = torch.tensor(np.std(arr, ddof=ddof), dtype=torch.float32)
 
-    if std_image == 0:
+    if not torch.isfinite(std_image) or std_image == 0:
         std_image = torch.ones_like(std_image)
     return mean_image.float(), std_image.float()
+
+
+_NORMALIZATION_CHUNK_ELEMENTS = 1_000_000
+
+
+def _iter_stat_chunks(image, max_elements=_NORMALIZATION_CHUNK_ELEMENTS):
+    """Yield bounded views for statistics without materializing a full memmap."""
+    if max_elements < 1:
+        raise ValueError("max_elements must be positive")
+
+    def split(value):
+        shape = tuple(int(size) for size in value.shape)
+        element_count = math.prod(shape)
+        if element_count == 0:
+            return
+        if element_count <= max_elements or len(shape) == 0:
+            yield value
+            return
+
+        trailing_count = math.prod(shape[1:]) if len(shape) > 1 else 1
+        step = max(1, max_elements // max(trailing_count, 1))
+        if step > 1:
+            for start in range(0, shape[0], step):
+                yield value[start:start + step]
+            return
+
+        for index in range(shape[0]):
+            yield from split(value[index])
+
+    yield from split(image)
+
+
+def _chunk_moments(chunk):
+    """Return ``(count, mean, M2)`` for one chunk using float64 reductions."""
+    if isinstance(chunk, torch.Tensor):
+        # Training always consumes float32 patches. Match that representation
+        # before using float64 for stable moment calculations.
+        values = chunk.detach().to(dtype=torch.float32).to(dtype=torch.float64)
+        count = values.numel()
+        variance, mean = torch.var_mean(values, unbiased=False)
+        mean = float(mean.item())
+        m2 = float(variance.item()) * count
+    else:
+        # Training patches are converted to float32 in __getitem__, so compute
+        # statistics from that same representation before reducing in float64.
+        values = np.array(chunk, dtype=np.float32, copy=True)
+        count = values.size
+        mean = float(np.mean(values, dtype=np.float64))
+        m2 = float(np.var(values, dtype=np.float64)) * count
+
+    if not math.isfinite(mean) or not math.isfinite(m2):
+        raise ValueError("Training data contains non-finite values")
+    return count, mean, max(m2, 0.0)
+
+
+def dataset_stats(images, max_chunk_elements=_NORMALIZATION_CHUNK_ELEMENTS):
+    """Compute a voxel-weighted mean and sample std across all image stacks.
+
+    Parallel Welford aggregation keeps the calculation numerically stable while
+    bounded chunks avoid loading an entire memory-mapped training corpus at once.
+    """
+    total_count = 0
+    total_mean = 0.0
+    total_m2 = 0.0
+
+    for image in images:
+        for chunk in _iter_stat_chunks(image, max_chunk_elements):
+            chunk_count, chunk_mean, chunk_m2 = _chunk_moments(chunk)
+            if chunk_count == 0:
+                continue
+            combined_count = total_count + chunk_count
+            delta = chunk_mean - total_mean
+            total_m2 += (
+                chunk_m2
+                + delta * delta * total_count * chunk_count / combined_count
+            )
+            total_mean += delta * chunk_count / combined_count
+            total_count = combined_count
+
+    if total_count == 0:
+        raise ValueError("Cannot normalize an empty training dataset")
+
+    variance = total_m2 / (total_count - 1) if total_count > 1 else 0.0
+    total_std = math.sqrt(max(variance, 0.0))
+    if not math.isfinite(total_mean) or not math.isfinite(total_std):
+        raise ValueError("Training data produced non-finite normalization statistics")
+    if total_std == 0:
+        total_std = 1.0
+
+    return (
+        torch.tensor(total_mean, dtype=torch.float64),
+        torch.tensor(total_std, dtype=torch.float64),
+        total_count,
+    )
+
 
 def get_coordinate(img_size, patch_size, patch_interval):
     """DeepCAD version of stitching
@@ -206,7 +309,7 @@ def get_coordinate(img_size, patch_size, patch_interval):
 
 class DatasetSUPPORT(Dataset):
     def __init__(self, noisy_imgs, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
-        transform=None, random_patch=True, random_patch_seed=0):
+        transform=None, random_patch=True, random_patch_seed=0, normalize_across_images=False):
         """
         Arguments:
             noisy_imgs: list of noisy image stack ([Tensor with dimension [t, x, y]])
@@ -216,6 +319,8 @@ class DatasetSUPPORT(Dataset):
             transform: function of transformation (function)
             random_patch: sample patch in random or not (bool)
             random_patch_seed: seed for randomness (int)
+            normalize_across_images: use one voxel-weighted mean/std for every
+                image rather than normalizing each image separately (bool)
             algorithm: the algorithm of use (str)
         """
         # check arguments
@@ -223,6 +328,18 @@ class DatasetSUPPORT(Dataset):
             raise Exception("length of patch_size must be 3")
         if len(patch_interval) != 3:
             raise Exception("length of patch_interval must be 3")      
+        if type(normalize_across_images) is not bool:
+            raise TypeError("normalize_across_images must be True or False")
+
+        if normalize_across_images and load_to_memory:
+            noisy_imgs = [
+                noisy_img.detach().to(device="cpu", dtype=torch.float32)
+                if isinstance(noisy_img, torch.Tensor)
+                else torch.from_numpy(
+                    np.array(noisy_img, dtype=np.float32, copy=True)
+                )
+                for noisy_img in noisy_imgs
+            ]
 
         # initialize
         self.data_weight = []
@@ -239,26 +356,53 @@ class DatasetSUPPORT(Dataset):
         self.patch_rng = np.random.default_rng(random_patch_seed)
         self.precomputed_indices = None
         self.load_to_memory = load_to_memory
+        self.normalize_across_images = normalize_across_images
 
         self.noisy_imgs = noisy_imgs
-        self.mean_images = []
-        self.std_images = []
-        for idx, noisy_img in enumerate(tqdm(noisy_imgs)):
+        self.dataset_mean = None
+        self.dataset_std = None
+        self.dataset_count = None
+        if self.normalize_across_images:
+            (
+                self.dataset_mean,
+                self.dataset_std,
+                self.dataset_count,
+            ) = dataset_stats(
+                tqdm(noisy_imgs, desc="Computing shared normalization")
+            )
+            image_count = len(noisy_imgs)
+            self.mean_images = self.dataset_mean.repeat(image_count)
+            self.std_images = self.dataset_std.repeat(image_count)
             if load_to_memory:
-                noisy_img, mean_image, std_image = normalize(noisy_img)
-                self.noisy_imgs[idx] = noisy_img
+                for noisy_img in tqdm(noisy_imgs):
+                    for chunk in _iter_stat_chunks(noisy_img):
+                        normalized_chunk = (
+                            chunk.detach().to(dtype=torch.float32).to(dtype=torch.float64)
+                        )
+                        normalized_chunk.sub_(self.dataset_mean).div_(self.dataset_std)
+                        chunk.copy_(normalized_chunk)
+                print("Normalized all noisy images with one shared dataset mean/std.")
             else:
-                mean_image, std_image = image_stats(noisy_img)
-            self.mean_images.append(mean_image.detach().cpu().float())
-            self.std_images.append(std_image.detach().cpu().float())
-
-        self.mean_images = torch.stack(self.mean_images) if self.mean_images else torch.empty(0)
-        self.std_images = torch.stack(self.std_images) if self.std_images else torch.empty(0)
-        if load_to_memory:
-            print("Normalized noisy images and stored mean/std in memory.")
-            #print(f"Mean: {self.mean_images}, Std: {self.std_images}")
+                print("Stored shared dataset mean/std for on-the-fly normalization.")
         else:
-            print("Stored mean/std for on-the-fly normalization.")
+            self.mean_images = []
+            self.std_images = []
+            for idx, noisy_img in enumerate(tqdm(noisy_imgs)):
+                if load_to_memory:
+                    noisy_img, mean_image, std_image = normalize(noisy_img)
+                    self.noisy_imgs[idx] = noisy_img
+                else:
+                    mean_image, std_image = image_stats(noisy_img)
+                self.mean_images.append(mean_image.detach().cpu().float())
+                self.std_images.append(std_image.detach().cpu().float())
+
+            self.mean_images = torch.stack(self.mean_images) if self.mean_images else torch.empty(0)
+            self.std_images = torch.stack(self.std_images) if self.std_images else torch.empty(0)
+            if load_to_memory:
+                print("Normalized noisy images and stored mean/std in memory.")
+                #print(f"Mean: {self.mean_images}, Std: {self.std_images}")
+            else:
+                print("Stored mean/std for on-the-fly normalization.")
 
         # generate index
         self.indices_ds = []
@@ -349,7 +493,9 @@ class DatasetSUPPORT(Dataset):
                 else:
                     noisy_patch = img_obj[t_range, y_range, z_range]
                     noisy_img = torch.from_numpy(np.array(noisy_patch, dtype=np.float32, copy=True))
-            noisy_img = (noisy_img - self.mean_images[ds_idx]) / self.std_images[ds_idx]
+            noisy_img = noisy_img.to(torch.float64)
+            noisy_img.sub_(self.mean_images[ds_idx]).div_(self.std_images[ds_idx])
+            noisy_img = noisy_img.to(torch.float32)
         return noisy_img, torch.tensor([[t_idx, t_idx + self.patch_size[0]],\
             [y_idx, y_idx + self.patch_size[1]], [z_idx, z_idx + self.patch_size[2]]]), torch.tensor(ds_idx)
 

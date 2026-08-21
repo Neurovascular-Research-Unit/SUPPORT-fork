@@ -169,7 +169,11 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
    mode loads `gen_parameters.json`, which currently has exactly the same values
    as `parameters.json` but can be adjusted independently later. Generalized
    testing names a single-file result from the TIFF stem and a legacy 3+1D
-   directory result from the test directory name.
+   directory result from the test directory name. Before training, generalized
+   mode computes one voxel-weighted mean and sample standard deviation across
+   every discovered training TIFF and applies that shared z-score to all
+   training patches. This keeps all batch losses on one normalized scale;
+   normal mode retains its existing per-stack normalization.
 
    A checkpoint bundle contains the model, optimizer, and AMP scaler when AMP is
    enabled. In normal mode, `rm_intermediaries` controls whether older epoch
@@ -220,7 +224,8 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
    - Loss values are plotted in ASCII format during training.
    - During generalized training, every completed batch appends the running
      means `L1_mean`, `L2_mean`, and `L_mean` to
-     `<exp_name>_train.log`. `L_mean` is the combined training loss.
+     `<exp_name>_train.log`. `L_mean` is the combined training loss. The same log
+     records the shared training mean, standard deviation, and voxel count.
    - Normal-mode checkpoints are written at epoch boundaries. Generalized-mode
      checkpoints are written at the four batch-quartile endpoints and each new
      complete bundle replaces the preceding one.
