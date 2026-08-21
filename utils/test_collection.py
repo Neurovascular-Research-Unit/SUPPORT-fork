@@ -322,8 +322,10 @@ class TestingClass():
         """
         """
         if self.is_dir:
-            noisy_paths = list(Path(self.in_path).glob('*.tif'))
-            noisy_paths = sorted(noisy_paths)
+            noisy_paths = sorted(
+                path for path in Path(self.in_path).iterdir()
+                if path.is_file() and path.suffix.lower() in {'.tif', '.tiff'}
+            )
             if len(noisy_paths) == 0:
                 raise FileNotFoundError(f'No TIFF files were found in {self.in_path}.')
 

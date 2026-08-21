@@ -32,10 +32,17 @@ class LogManager:
         self._init_json()
 
     def _setup_logger(self):
-        self.logger = logging.getLogger(f"support_{self.mode}")
+        resolved_log_path = self.log_path.resolve()
+        self.logger = logging.getLogger(
+            f"support_{self.mode}:{resolved_log_path}"
+        )
         self.logger.setLevel(logging.INFO)
-        if not any(isinstance(h, logging.FileHandler) and h.baseFilename == str(self.log_path) for h in self.logger.handlers):
-            fh = logging.FileHandler(self.log_path, mode="a")
+        if not any(
+            isinstance(h, logging.FileHandler)
+            and h.baseFilename == str(resolved_log_path)
+            for h in self.logger.handlers
+        ):
+            fh = logging.FileHandler(resolved_log_path, mode="a")
             fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
             self.logger.addHandler(fh)
 
@@ -92,6 +99,21 @@ class LogManager:
                 f.write("epoch,time,loss_total,loss_l1,loss_l2\n")
             f.write(f'{rec["epoch"]},{rec["time"]},{rec["loss_total"]},{rec["loss_l1"]},{rec["loss_l2"]}\n')
         self.logger.info(f"Epoch {epoch}: loss_total={loss_total} l1={loss_l1} l2={loss_l2}")
+
+    def append_batch_loss(
+        self,
+        epoch,
+        batch,
+        total_batches,
+        L1_mean,
+        L2_mean,
+        L_mean,
+    ):
+        """Write generalized-training running loss means to the text log."""
+        self.logger.info(
+            f"Epoch {epoch} Batch {batch}/{total_batches}: "
+            f"L1_mean={L1_mean} L2_mean={L2_mean} L_mean={L_mean}"
+        )
 
     def log_diagnostic(self, text):
         self.logger.info(text)

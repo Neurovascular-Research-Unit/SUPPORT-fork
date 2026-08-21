@@ -132,24 +132,59 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
 
 5. **Configure the parameters**:
 
-   In the second cell of the notebook, modify these parameters according to your data:
+   In the notebook's configuration cell, modify these parameters according to
+   your data:
 
    ```python
-   in_path = "/path/to/your/noisy_data"  # Path to your input data
-   exp_name = None  # Optional: name for your experiment
+   in_path = "/path/to/your/noisy_data.tif"
+   train_gen = False  # Options: True or False
+   test_dir = None  # Used only when train_gen is True
+   exp_name = str(Path(in_path).stem)
    dimensionality = "3+1D"  # Options: "2+1D", "3D", or "3+1D"
    rm_dir = True  # Store training artifacts under notebooks/tmp
-   checkpoints = True  # Save a resumable checkpoint after every epoch
+   checkpoints = True  # Enable resumable checkpoints
    resume = True  # Automatically continue from the latest complete checkpoint
    rm_intermediaries = True  # Keep only the latest checkpoint bundle
    ```
 
-   A checkpoint bundle contains the model, optimizer, and AMP scaler when AMP is
-   enabled. If `resume` is enabled but no complete bundle exists, training starts
-   from epoch 0. When `checkpoints` is disabled, one final bundle is still saved
-   for testing and possible later continuation.
+   With the default `train_gen = False`, `in_path` is the training input and is
+   also denoised by the **Test** cells. It can be a TIFF stack or a directory of
+   top-level `.tif` or `.tiff` stacks (with case-insensitive extensions). This
+   normal mode loads `parameters.json` and, when
+   `checkpoints` is enabled, saves a resumable checkpoint after every epoch.
 
-   In the third code cell (fourth cell overall), you can adjust system-specific parameters:
+   To train one model for generalization across a directory of data, use:
+
+   ```python
+   in_path = "/path/to/training_data"
+   train_gen = True
+   test_dir = "/path/to/data_to_denoise"  # A TIFF or directory of top-level TIFF stacks
+   exp_name = str(Path(in_path).stem)
+   ```
+
+   Generalized training searches `in_path` recursively for both `.tif` and
+   `.tiff` files, including files in nested subdirectories. Only `test_dir` is
+   passed to the **Test** cells for denoising; the training directory is not
+   denoised automatically. Leave `test_dir = None` for a train-only run. This
+   mode loads `gen_parameters.json`, which currently has exactly the same values
+   as `parameters.json` but can be adjusted independently later. Generalized
+   testing names a single-file result from the TIFF stem and a legacy 3+1D
+   directory result from the test directory name.
+
+   A checkpoint bundle contains the model, optimizer, and AMP scaler when AMP is
+   enabled. In normal mode, `rm_intermediaries` controls whether older epoch
+   bundles are retained. In generalized mode with `checkpoints = True`, a bundle
+   is saved at each of the four batch-quartile endpoints in every epoch. The new
+   bundle is saved completely before the preceding bundle is deleted, so the
+   latest complete quartile checkpoint remains available. If `resume` is enabled
+   but no complete bundle exists, training starts from epoch 0. When
+   `checkpoints` is disabled, one final bundle is still saved for testing and
+   possible later continuation. Resume generalized training with the same input
+   data and batch settings; a mid-epoch checkpoint safely repeats that epoch,
+   while a final-quartile checkpoint continues with the next epoch.
+
+   In the following personalization cell, you can adjust system-specific
+   parameters:
 
    ```python
    out_dir = None  # Optional: output directory (defaults to current directory)
@@ -159,7 +194,9 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
 
 6. **Adjust training/testing parameters** (optional):
 
-   The notebook loads parameters from `parameters.json`. You can modify this file to adjust:
+   Normal mode loads `parameters.json`; generalized mode loads
+   `gen_parameters.json`. Modify the applicable file to adjust:
+
    - Number of epochs (`n_epochs`)
    - Patch size and intervals
    - Batch size
@@ -171,14 +208,22 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
    Execute the cells in order:
    - **Initialization**: Imports libraries and sets up parameters
    - **Train**: Runs the training process
-   - **Test**: Applies the trained model to denoise/enhance your data
+   - **Test**: Applies the trained model to `in_path` in normal mode or to
+     `test_dir` in generalized mode; generalized training skips these cells when
+     `test_dir` is `None`
 
    You can run cells individually by selecting them and pressing `Shift+Enter`, or run all cells using `Cell > Run All` from the menu.
 
 8. **Monitor training progress**:
-   - Training progress will be displayed with a progress bar
-   - Loss values are plotted in ASCII format during training
-   - Models are saved as checkpoints during training
+
+   - Training progress is displayed with a progress bar.
+   - Loss values are plotted in ASCII format during training.
+   - During generalized training, every completed batch appends the running
+     means `L1_mean`, `L2_mean`, and `L_mean` to
+     `<exp_name>_train.log`. `L_mean` is the combined training loss.
+   - Normal-mode checkpoints are written at epoch boundaries. Generalized-mode
+     checkpoints are written at the four batch-quartile endpoints and each new
+     complete bundle replaces the preceding one.
 
 9. **View results**:
    - After testing, denoised/enhanced TIFFs are saved with `_SPRT.tif` appended to their stem
@@ -216,6 +261,7 @@ If you get import errors:
 
 ## Additional Resources
 
-- Adjust `parameters.json` for different dimensionality modes (2+1D, 3D, or 3+1D)
+- Adjust `parameters.json` (normal mode) or `gen_parameters.json` (generalized
+  mode) for different dimensionality modes (2+1D, 3D, or 3+1D)
 - For custom training parameters, refer to the `TrainingClass` and `TestingClass` documentation in the source code
 - The model architecture is defined in `support/SUPPORT.py`

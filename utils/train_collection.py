@@ -46,6 +46,7 @@ class TrainingClass():
         self.checkpoints = False
         self.resume = False
         self.rm_intermediaries = False
+        self.train_gen = False
         # Backward-compatible alias for callers that used the earlier API.
         self.save_every_epoch = False
         self.rnd_seed = 0
@@ -80,6 +81,7 @@ class TrainingClass():
         self.is_dir = False
         self.model_path = None
         self.latest_checkpoint_epoch = None
+        self.latest_checkpoint_batch = None
         self._checkpoint_controls_configured = any(
             key in params_dict
             for key in ("checkpoints", "resume", "rm_intermediaries", "save_every_epoch")
@@ -88,9 +90,11 @@ class TrainingClass():
         self.set_params(params_dict)
         if not checkpoints_was_set and self.save_every_epoch:
             self.checkpoints = True
-        for option in ("checkpoints", "resume", "rm_intermediaries"):
+        for option in ("checkpoints", "resume", "rm_intermediaries", "train_gen"):
             if type(getattr(self, option)) is not bool:
                 raise TypeError(f"{option} must be True or False")
+        if self.train_gen and not self.is_dir:
+            raise ValueError("train_gen requires in_path to be a directory")
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.device = "cuda" if self.cuda else "cpu"
 
@@ -178,7 +182,8 @@ class TrainingClass():
             self.log = LogManager(self, mode="train", out_dir=self.out_dir, filename_prefix=self.exp_name)
             self.log.log_params()
         except Exception:
-            pass
+            if self.train_gen:
+                raise
         self._files_prepared = True
 
     def _read_stack(self, path):
@@ -252,8 +257,13 @@ class TrainingClass():
         noisy_imgs = []
         print("\033[1;31mLoaded Files -----> \033[0m")
         if self.is_dir:
+            path_iterator = (
+                Path(self.in_path).rglob('*')
+                if self.train_gen
+                else Path(self.in_path).iterdir()
+            )
             noisy_paths = [
-                path for path in Path(self.in_path).iterdir()
+                path for path in path_iterator
                 if path.is_file() and path.suffix.lower() in ('.tif', '.tiff')
             ]
         else:
@@ -316,19 +326,26 @@ class TrainingClass():
         self.Tensor = torch.cuda.FloatTensor if self.cuda else torch.Tensor
         self.rng = np.random.default_rng(self.rnd_seed)
 
-    def _checkpoint_paths(self, epoch):
+    def _checkpoint_label(self, epoch, batch=None):
+        if batch is None:
+            return str(epoch)
+        return f"{epoch}_batch_{batch}"
+
+    def _checkpoint_paths(self, epoch, batch=None):
         checkpoint_dir = Path(self.pth_dir)
+        label = self._checkpoint_label(epoch, batch)
         return {
-            "model": checkpoint_dir / f"model_{epoch}.pth",
-            "optimizer": checkpoint_dir / f"optimizer_{epoch}.pth",
-            "scaler": checkpoint_dir / f"scaler_{epoch}.pth",
+            "model": checkpoint_dir / f"model_{label}.pth",
+            "optimizer": checkpoint_dir / f"optimizer_{label}.pth",
+            "scaler": checkpoint_dir / f"scaler_{label}.pth",
         }
 
-    def _checkpoint_incomplete_path(self, epoch):
-        return Path(self.pth_dir) / f".checkpoint_{epoch}.incomplete"
+    def _checkpoint_incomplete_path(self, epoch, batch=None):
+        label = self._checkpoint_label(epoch, batch)
+        return Path(self.pth_dir) / f".checkpoint_{label}.incomplete"
 
-    def _required_checkpoint_paths(self, epoch):
-        paths = self._checkpoint_paths(epoch)
+    def _required_checkpoint_paths(self, epoch, batch=None):
+        paths = self._checkpoint_paths(epoch, batch)
         required = [paths["model"], paths["optimizer"]]
         if self.use_amp:
             required.append(paths["scaler"])
@@ -349,6 +366,22 @@ class TrainingClass():
             if all(path.is_file() for path in required):
                 checkpoint_epochs.append(epoch)
         return max(checkpoint_epochs) if checkpoint_epochs else None
+
+    def _find_latest_complete_generalization_checkpoint(self):
+        """Return the latest complete ``(epoch, batch)`` checkpoint bundle."""
+        checkpoints = []
+        model_pattern = re.compile(r"^model_(\d+)_batch_(\d+)\.pth$")
+        for model_path in Path(self.pth_dir).iterdir():
+            match = model_pattern.fullmatch(model_path.name)
+            if match is None:
+                continue
+            epoch, batch = (int(value) for value in match.groups())
+            if self._checkpoint_incomplete_path(epoch, batch).is_file():
+                continue
+            _, required = self._required_checkpoint_paths(epoch, batch)
+            if all(path.is_file() for path in required):
+                checkpoints.append((epoch, batch))
+        return max(checkpoints) if checkpoints else None
 
     def _find_latest_legacy_checkpoint(self):
         """Find the newest one-based, model-only checkpoint from older notebooks."""
@@ -379,6 +412,59 @@ class TrainingClass():
         Automatic resume selects the newest complete state bundle. The explicit
         ``epoch=N`` path retains the original SUPPORT contract and loads N-1.
         """
+        checkpoint_batch = None
+        if self.resume and self.train_gen:
+            generalization_checkpoint = (
+                self._find_latest_complete_generalization_checkpoint()
+            )
+            if generalization_checkpoint is not None:
+                checkpoint_epoch, checkpoint_batch = generalization_checkpoint
+                total_batches = len(self.dataloader)
+                if checkpoint_batch == total_batches:
+                    self.epoch = checkpoint_epoch + 1
+                else:
+                    # A mid-epoch checkpoint repeats that epoch. This can repeat
+                    # some work, but never skips the unfinished portion.
+                    self.epoch = checkpoint_epoch
+
+                paths, required = self._required_checkpoint_paths(
+                    checkpoint_epoch, checkpoint_batch
+                )
+                incomplete_path = self._checkpoint_incomplete_path(
+                    checkpoint_epoch, checkpoint_batch
+                )
+                if incomplete_path.is_file():
+                    raise RuntimeError(
+                        f"Cannot resume from epoch {checkpoint_epoch}, batch "
+                        f"{checkpoint_batch}; its checkpoint bundle is marked "
+                        "incomplete"
+                    )
+                missing = [str(path) for path in required if not path.is_file()]
+                if missing:
+                    raise FileNotFoundError(
+                        "Cannot resume from generalized checkpoint; missing "
+                        f"checkpoint file(s): {', '.join(missing)}"
+                    )
+                self.local_model.load_state_dict(
+                    self._load_state_dict(paths["model"])
+                )
+                self.optimizer.load_state_dict(
+                    self._load_state_dict(paths["optimizer"])
+                )
+                if self.use_amp:
+                    self.scaler.load_state_dict(
+                        self._load_state_dict(paths["scaler"])
+                    )
+                self.latest_checkpoint_epoch = checkpoint_epoch
+                self.latest_checkpoint_batch = checkpoint_batch
+                self.model_path = str(paths["model"])
+                print(
+                    "Loaded generalized checkpoint from epoch "
+                    f"{checkpoint_epoch}, batch {checkpoint_batch}/{total_batches}; "
+                    f"training will continue at epoch {self.epoch}"
+                )
+                return
+
         if self.resume:
             checkpoint_epoch = self._find_latest_complete_checkpoint()
             legacy_checkpoint = self._find_latest_legacy_checkpoint()
@@ -392,6 +478,7 @@ class TrainingClass():
                 )
                 self.epoch = checkpoint_epoch + 1
                 self.latest_checkpoint_epoch = checkpoint_epoch
+                self.latest_checkpoint_batch = None
                 self.model_path = str(legacy_model_path)
                 print(
                     f"Loaded legacy model-only checkpoint {legacy_model_path.name}; "
@@ -428,6 +515,7 @@ class TrainingClass():
         if self.use_amp:
             self.scaler.load_state_dict(self._load_state_dict(paths["scaler"]))
         self.latest_checkpoint_epoch = checkpoint_epoch
+        self.latest_checkpoint_batch = None
         self.model_path = str(paths["model"])
         print(
             f"Loaded checkpoint from epoch {checkpoint_epoch}; "
@@ -448,26 +536,57 @@ class TrainingClass():
             if temporary_path.exists():
                 temporary_path.unlink()
 
-    def _remove_intermediary_checkpoints(self, keep_epoch):
+    def _remove_intermediary_checkpoints(self, keep_epoch, keep_batch=None):
         checkpoint_pattern = re.compile(r"^(model|optimizer|scaler)_(\d+)\.pth$")
+        generalization_pattern = re.compile(
+            r"^(model|optimizer|scaler)_(\d+)_batch_(\d+)\.pth$"
+        )
         legacy_model_pattern = re.compile(r"^model\d+\.pth$")
         incomplete_pattern = re.compile(r"^\.checkpoint_(\d+)\.incomplete$")
+        generalization_incomplete_pattern = re.compile(
+            r"^\.checkpoint_(\d+)_batch_(\d+)\.incomplete$"
+        )
         for path in Path(self.pth_dir).iterdir():
             match = checkpoint_pattern.fullmatch(path.name)
-            remove = match is not None and int(match.group(2)) != keep_epoch
+            remove = match is not None and (
+                keep_batch is not None or int(match.group(2)) != keep_epoch
+            )
+            generalization_match = generalization_pattern.fullmatch(path.name)
+            remove = remove or (
+                generalization_match is not None
+                and (
+                    int(generalization_match.group(2)),
+                    int(generalization_match.group(3)),
+                )
+                != (keep_epoch, keep_batch)
+            )
             remove = remove or legacy_model_pattern.fullmatch(path.name) is not None
             incomplete_match = incomplete_pattern.fullmatch(path.name)
             remove = remove or (
                 incomplete_match is not None
-                and int(incomplete_match.group(1)) != keep_epoch
+                and (
+                    keep_batch is not None
+                    or int(incomplete_match.group(1)) != keep_epoch
+                )
+            )
+            generalization_incomplete_match = (
+                generalization_incomplete_pattern.fullmatch(path.name)
+            )
+            remove = remove or (
+                generalization_incomplete_match is not None
+                and (
+                    int(generalization_incomplete_match.group(1)),
+                    int(generalization_incomplete_match.group(2)),
+                )
+                != (keep_epoch, keep_batch)
             )
             if remove:
                 path.unlink()
 
-    def save_checkpoint(self, epoch):
-        """Save model, optimizer, and optional AMP state for a completed epoch."""
-        paths = self._checkpoint_paths(epoch)
-        incomplete_path = self._checkpoint_incomplete_path(epoch)
+    def save_checkpoint(self, epoch, batch=None, remove_previous=False):
+        """Save a complete epoch-level or generalized batch-level state bundle."""
+        paths = self._checkpoint_paths(epoch, batch)
+        incomplete_path = self._checkpoint_incomplete_path(epoch, batch)
         incomplete_path.touch(exist_ok=True)
         self._atomic_torch_save(self.local_model.state_dict(), paths["model"])
         self._atomic_torch_save(self.optimizer.state_dict(), paths["optimizer"])
@@ -478,9 +597,22 @@ class TrainingClass():
         incomplete_path.unlink()
 
         self.latest_checkpoint_epoch = epoch
+        self.latest_checkpoint_batch = batch
         self.model_path = str(paths["model"])
-        if self.rm_intermediaries:
-            self._remove_intermediary_checkpoints(keep_epoch=epoch)
+        if remove_previous or self.rm_intermediaries:
+            self._remove_intermediary_checkpoints(
+                keep_epoch=epoch, keep_batch=batch
+            )
+
+    @staticmethod
+    def _quarter_checkpoint_batches(total_batches):
+        """Return distinct one-based batch numbers at the four quartile ends."""
+        if total_batches < 1:
+            return ()
+        return tuple(sorted({
+            (total_batches * quarter + 3) // 4
+            for quarter in range(1, 5)
+        }))
         
 
     def train(self):
@@ -509,6 +641,23 @@ class TrainingClass():
         lh_L = []
         lh_L1 = []
         lh_L2 = []
+        total_batches = len(self.dataloader)
+        checkpoint_batches = (
+            set(self._quarter_checkpoint_batches(total_batches))
+            if self.train_gen and self.checkpoints
+            else set()
+        )
+        if (
+            self.latest_checkpoint_epoch == self.epoch
+            and self.latest_checkpoint_batch is not None
+        ):
+            # A resumed incomplete epoch is retrained from its beginning, but an
+            # earlier quartile must never replace the newer bundle we loaded.
+            checkpoint_batches = {
+                batch
+                for batch in checkpoint_batches
+                if batch > self.latest_checkpoint_batch
+            }
 
         with tqdm(self.dataloader, unit='batches', desc=f'Epoch {self.epoch}') as pbar:
             for i, data in enumerate(pbar):
@@ -539,13 +688,46 @@ class TrainingClass():
                 lh_L.append(loss_sum.item())
                 lh_L1.append(loss_L1_pixelwise.item())
                 lh_L2.append(loss_L2_pixelwise.item())
+                L_mean = np.mean(np.array(lh_L))
+                L1_mean = np.mean(np.array(lh_L1))
+                L2_mean = np.mean(np.array(lh_L2))
                 pbar.set_postfix(
                     {
-                        'L':np.mean(np.array(lh_L)), 
-                        'L1': np.mean(np.array(lh_L1)), 
-                        'L2': np.mean(np.array(lh_L2))
+                        'L': L_mean,
+                        'L1': L1_mean,
+                        'L2': L2_mean,
                     }
                 )
+                batch = i + 1
+                if self.train_gen:
+                    if not hasattr(self, "log"):
+                        raise RuntimeError(
+                            "Generalized training requires an initialized log"
+                        )
+                    self.log.append_batch_loss(
+                        self.epoch,
+                        batch,
+                        total_batches,
+                        L1_mean=L1_mean,
+                        L2_mean=L2_mean,
+                        L_mean=L_mean,
+                    )
+                if batch in checkpoint_batches:
+                    # When an interrupted epoch restarts exactly on its latest
+                    # saved quartile, retain that complete bundle until the next
+                    # distinct checkpoint has been written.
+                    is_current_checkpoint = (
+                        self.latest_checkpoint_epoch == self.epoch
+                        and self.latest_checkpoint_batch == batch
+                        and self.model_path is not None
+                        and Path(self.model_path).is_file()
+                    )
+                    if not is_current_checkpoint:
+                        self.save_checkpoint(
+                            self.epoch,
+                            batch=batch,
+                            remove_previous=True,
+                        )
         self.lh_L = lh_L
         self.lh_L1 = lh_L1
         self.lh_L2 = lh_L2
@@ -575,7 +757,8 @@ class TrainingClass():
                 except Exception:
                     pass
             if self.checkpoints:
-                self.save_checkpoint(epoch)
+                if not self.train_gen:
+                    self.save_checkpoint(epoch)
             elif self._checkpoint_controls_configured and epoch == self.n_epochs - 1:
                 # New checkpoint controls save a complete final bundle for inference
                 # and for later continuation, even when per-epoch saves are disabled.
