@@ -501,7 +501,8 @@ class DatasetSUPPORT(Dataset):
 
 class DatasetSUPPORT_test_stitch(Dataset):
     def __init__(self, noisy_img, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
-        transform=None, random_patch=False, random_patch_seed=0):
+        transform=None, random_patch=False, random_patch_seed=0,
+        normalization_mean=None, normalization_std=None):
         """
         Arguments:
             noisy_img: noisy image stack (Tensor with dimension [t, x, y])
@@ -511,6 +512,8 @@ class DatasetSUPPORT_test_stitch(Dataset):
             transform: function of transformation (function)
             random_patch: sample patch in random or not (bool)
             random_patch_seed: seed for randomness (int)
+            normalization_mean: optional fixed scalar mean (float)
+            normalization_std: optional fixed positive scalar std (float)
         """
         # check arguments
         if len(patch_size) != 3:
@@ -529,7 +532,32 @@ class DatasetSUPPORT_test_stitch(Dataset):
             noisy_img = noisy_img.to(torch.float32)
         self.noisy_img = noisy_img
         self.load_to_memory = load_to_memory
-        self.noisy_img, self.mean_img, self.std_img = normalize(self.noisy_img)
+        if (normalization_mean is None) != (normalization_std is None):
+            raise ValueError(
+                "normalization_mean and normalization_std must be provided together"
+            )
+        if normalization_mean is None:
+            self.noisy_img, self.mean_img, self.std_img = normalize(
+                self.noisy_img
+            )
+        else:
+            self.mean_img = torch.as_tensor(
+                normalization_mean,
+                dtype=torch.float32,
+            )
+            self.std_img = torch.as_tensor(
+                normalization_std,
+                dtype=torch.float32,
+            )
+            if self.mean_img.numel() != 1 or self.std_img.numel() != 1:
+                raise ValueError("normalization mean and std must be scalars")
+            if (
+                not torch.isfinite(self.mean_img)
+                or not torch.isfinite(self.std_img)
+                or self.std_img <= 0
+            ):
+                raise ValueError("normalization mean/std must be finite with std > 0")
+            self.noisy_img.sub_(self.mean_img).div_(self.std_img)
 
         # generate index
         self.indices = []

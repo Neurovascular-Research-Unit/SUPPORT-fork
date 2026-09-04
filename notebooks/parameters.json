@@ -38,7 +38,7 @@
       "bc_channels": 64,
       "obo_channels": [32, 16],
       "ll_channels": [64, 32, 16],
-      "unet_channels": [256, 512, 1024, 512, 4096],
+      "unet_channels": [256, 512, 1024, 2048, 4096],
       "bs_size": [7, 7],
       "bp": false,
       "loss_coef": [0.5, 0.5],

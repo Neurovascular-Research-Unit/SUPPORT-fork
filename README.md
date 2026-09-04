@@ -129,6 +129,10 @@ unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
 
 4. **Open the run.ipynb notebook**:
    - In the Jupyter interface, click on `run.ipynb` to open it.
+   - For generalized training with held-out validation after every epoch, open
+     `train_gen.ipynb` instead. It recursively reads validation TIFFs from
+     `test_dir`, retains every epoch checkpoint, and keeps paired training and
+     validation loss CSVs.
 
 5. **Configure the parameters**:
 

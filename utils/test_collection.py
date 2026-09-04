@@ -1,8 +1,10 @@
+import os
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 import sys
-sys.path.insert(0, str(Path('./').resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -32,17 +34,21 @@ class TestingClass():
         self.in_path = ""
         self.model_path = ""
         self.out_dir = None
+        self.output_path = None
         self.exp_name = None
         self.dimensionality = None
         self.rm_dir = True
         self.cuda_device = [0]
         self.pad = True
+        self.track_loss = False
         
         # DATASET
         self.patch_size = [61, 128, 128]
         self.patch_interval = [1, 11, 11]
         self.batch_size = 16
         self.pin_memory = True
+        self.normalization_mean = None
+        self.normalization_std = None
         
         # MODEL
         self.depth = 5
@@ -57,14 +63,17 @@ class TestingClass():
         self.use_cpu = False
         self.n_cpu = 8
         self.prefetch_factor = 2
+        self.loss_coef = [0.5, 0.5]
         
         # AUTOMATED
         self.cuda = False
         self.device = "cpu"
         self.is_dir = False
+        self._owns_model = False
         self.set_params(params_dict)
-        if type(self.pin_memory) is not bool:
-            raise TypeError("pin_memory must be True or False")
+        for option in ("pin_memory", "track_loss"):
+            if type(getattr(self, option)) is not bool:
+                raise TypeError(f"{option} must be True or False")
         self.cuda = torch.cuda.is_available() and not self.use_cpu
         self.device = "cuda" if self.cuda else "cpu"
 
@@ -90,16 +99,35 @@ class TestingClass():
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
         
-    def run(self):
+    def run(self, model=None):
         """
         General function for training SUPPORT network.
         """
-        self.initialize_network()
-        self.run_test()
+        shared_model = model is not None
+        previous_training_mode = model.training if shared_model else None
+        if shared_model:
+            self.local_model = model
+            self._owns_model = False
+            try:
+                self.device = next(model.parameters()).device
+            except StopIteration:
+                self.device = torch.device("cpu")
+        else:
+            self.initialize_network()
+            self._owns_model = True
+
+        self._reset_loss_tracking()
+        try:
+            self.run_test()
+            return self._loss_metrics() if self.track_loss else None
+        finally:
+            if shared_model:
+                self.local_model.train(previous_training_mode)
 
     def release_resources(self):
         if hasattr(self, "local_model"):
-            self.local_model.to("cpu")
+            if self._owns_model:
+                self.local_model.to("cpu")
             del self.local_model
         if hasattr(self, "dataloader"):
             del self.dataloader
@@ -194,6 +222,8 @@ class TestingClass():
             transform=None,
             random_patch=False,
             load_to_memory=True,
+            normalization_mean=self.normalization_mean,
+            normalization_std=self.normalization_std,
         )
         self.dataloader = DataLoader(
             dataset=test_set, 
@@ -207,9 +237,62 @@ class TestingClass():
         return denoised_stack[crop_margin:-crop_margin, :, :]
 
     def save_inference(self, out_path, denoised_img, axes):
-        tifffile.imwrite(out_path, np.asarray(denoised_img, dtype=np.float32), imagej=True, metadata={'axes': axes})
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if out_path.exists():
+            output_mode = stat.S_IMODE(out_path.stat().st_mode)
+        else:
+            current_umask = os.umask(0)
+            os.umask(current_umask)
+            output_mode = 0o666 & ~current_umask
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{out_path.name}.",
+            suffix=".tmp.tif",
+            dir=out_path.parent,
+        )
+        os.close(file_descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            tifffile.imwrite(
+                temporary_path,
+                np.asarray(denoised_img, dtype=np.float32),
+                imagej=True,
+                metadata={'axes': axes},
+            )
+            os.chmod(temporary_path, output_mode)
+            os.replace(temporary_path, out_path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    def _reset_loss_tracking(self):
+        self._loss_l1_sum = 0.0
+        self._loss_l2_sum = 0.0
+        self._loss_element_count = 0
+
+    def _record_validation_loss(self, denoised_img, noisy_img_target):
+        difference = denoised_img.float() - noisy_img_target.float()
+        self._loss_l1_sum += torch.abs(difference).sum().item()
+        self._loss_l2_sum += torch.square(difference).sum().item()
+        self._loss_element_count += noisy_img_target.numel()
+
+    def _loss_metrics(self):
+        if self._loss_element_count == 0:
+            raise RuntimeError("Validation produced no output pixels")
+        loss_l1 = self._loss_l1_sum / self._loss_element_count
+        loss_l2 = self._loss_l2_sum / self._loss_element_count
+        return {
+            "loss_total": self.loss_coef[0] * loss_l1 + self.loss_coef[1] * loss_l2,
+            "loss_l1": loss_l1,
+            "loss_l2": loss_l2,
+            "loss_l1_sum": self._loss_l1_sum,
+            "loss_l2_sum": self._loss_l2_sum,
+            "element_count": self._loss_element_count,
+        }
 
     def _sprt_output_path(self, stem):
+        if self.output_path is not None:
+            return str(self.output_path)
         stem = str(stem)
         if stem.lower().endswith('_sprt'):
             stem = stem[:-5]
@@ -282,6 +365,11 @@ class TestingClass():
         with torch.no_grad():
             self.local_model.eval()
             denoised_stack = np.zeros(self.dataloader.dataset.noisy_img.shape, dtype=np.float32)
+            validation_mask = (
+                np.zeros(denoised_stack.shape, dtype=bool)
+                if self.track_loss
+                else None
+            )
             for _, (noisy_img, _, single_coordinate) in enumerate(tqdm(self.dataloader, desc="validate")):
                 noisy_img = noisy_img.to(self.device) #[b, z, y, x]
                 noisy_img_denoised = self.local_model(noisy_img)
@@ -298,12 +386,30 @@ class TestingClass():
                     patch_end_h = int(single_coordinate['patch_end_h'][bi])
 
                     stack_start_s = int(single_coordinate['init_s'][bi])
-                    
+
+                    denoised_patch = noisy_img_denoised[bi].squeeze()[
+                        patch_start_h:patch_end_h,
+                        patch_start_w:patch_end_w,
+                    ]
                     denoised_stack[stack_start_s+(T//2), stack_start_h:stack_end_h, stack_start_w:stack_end_w] \
-                        = noisy_img_denoised[bi].squeeze()[patch_start_h:patch_end_h, patch_start_w:patch_end_w].cpu()
+                        = denoised_patch.cpu()
+                    if self.track_loss:
+                        validation_mask[
+                            stack_start_s + (T // 2),
+                            stack_start_h:stack_end_h,
+                            stack_start_w:stack_end_w,
+                        ] = True
                 del noisy_img_denoised
                 del noisy_img
 
+            if self.track_loss:
+                noisy_stack = self.dataloader.dataset.noisy_img.numpy()
+                # Compare only pixels owned by the final stitched result. This
+                # avoids double-counting overlap or including unfilled borders.
+                self._record_validation_loss(
+                    torch.from_numpy(denoised_stack[validation_mask]),
+                    torch.from_numpy(noisy_stack[validation_mask]),
+                )
             # change nan values to 0 and denormalize
             self.denoised_stack = denoised_stack * self.dataloader.dataset.std_img.numpy() + self.dataloader.dataset.mean_img.numpy()
 

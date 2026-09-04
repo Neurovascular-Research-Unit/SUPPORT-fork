@@ -49,6 +49,7 @@ class TrainingClass():
         self.train_gen = False
         # Backward-compatible alias for callers that used the earlier API.
         self.save_every_epoch = False
+        self.epoch_end_callback = None
         self.rnd_seed = 0
         self.cuda_device = [0]
         
@@ -91,19 +92,21 @@ class TrainingClass():
             key in params_dict
             for key in ("checkpoints", "resume", "rm_intermediaries", "save_every_epoch")
         )
-        checkpoints_was_set = "checkpoints" in params_dict
         self.set_params(params_dict)
-        if not checkpoints_was_set and self.save_every_epoch:
-            self.checkpoints = True
         for option in (
             "checkpoints",
             "resume",
             "rm_intermediaries",
             "train_gen",
+            "save_every_epoch",
             "pin_memory",
         ):
             if type(getattr(self, option)) is not bool:
                 raise TypeError(f"{option} must be True or False")
+        if self.save_every_epoch:
+            self.checkpoints = True
+        if self.epoch_end_callback is not None and not callable(self.epoch_end_callback):
+            raise TypeError("epoch_end_callback must be callable or None")
         if self.train_gen and not self.is_dir:
             raise ValueError("train_gen requires in_path to be a directory")
         self.normalization_scope = "dataset" if self.train_gen else "per_stack"
@@ -444,7 +447,25 @@ class TrainingClass():
             generalization_checkpoint = (
                 self._find_latest_complete_generalization_checkpoint()
             )
-            if generalization_checkpoint is not None:
+            epoch_checkpoint = (
+                self._find_latest_complete_checkpoint()
+                if self.save_every_epoch
+                else None
+            )
+            use_generalization_checkpoint = generalization_checkpoint is not None
+            if generalization_checkpoint is not None and epoch_checkpoint is not None:
+                generalized_epoch, generalized_batch = generalization_checkpoint
+                generalized_completed_epoch = (
+                    generalized_epoch
+                    if generalized_batch == len(self.dataloader)
+                    else generalized_epoch - 1
+                )
+                # Prefer an epoch snapshot at equal progress. It represents the
+                # clean boundary before a partially completed next epoch.
+                use_generalization_checkpoint = (
+                    generalized_completed_epoch > epoch_checkpoint
+                )
+            if use_generalization_checkpoint:
                 checkpoint_epoch, checkpoint_batch = generalization_checkpoint
                 total_batches = len(self.dataloader)
                 if checkpoint_batch == total_batches:
@@ -671,7 +692,7 @@ class TrainingClass():
         total_batches = len(self.dataloader)
         checkpoint_batches = (
             set(self._quarter_checkpoint_batches(total_batches))
-            if self.train_gen and self.checkpoints
+            if self.train_gen and self.checkpoints and not self.save_every_epoch
             else set()
         )
         if (
@@ -778,13 +799,24 @@ class TrainingClass():
             L2_mean = np.mean(np.array(self.lh_L2))
             lh.append(L_mean)
             plotASCII(lh)
-            if hasattr(self, "log"):
-                try:
-                    self.log.append_loss(epoch, loss_total=L_mean, loss_l1=L1_mean, loss_l2=L2_mean)
-                except Exception:
-                    pass
+            training_metrics = {
+                "loss_total": float(L_mean),
+                "loss_l1": float(L1_mean),
+                "loss_l2": float(L2_mean),
+            }
+            validation_metrics = None
+            if self.epoch_end_callback is not None:
+                # Validate before committing the epoch checkpoint. If validation
+                # is interrupted, resume repeats this epoch instead of skipping
+                # a missing metric/output set.
+                validation_metrics = self.epoch_end_callback(
+                    self,
+                    epoch,
+                    training_metrics,
+                )
+                self.last_validation_metrics = validation_metrics
             if self.checkpoints:
-                if not self.train_gen:
+                if not self.train_gen or self.save_every_epoch:
                     self.save_checkpoint(epoch)
             elif self._checkpoint_controls_configured and epoch == self.n_epochs - 1:
                 # New checkpoint controls save a complete final bundle for inference
@@ -798,5 +830,21 @@ class TrainingClass():
                     legacy_model_path,
                 )
                 self.model_path = str(legacy_model_path)
+            if hasattr(self, "log"):
+                try:
+                    extra = (
+                        {"validation": validation_metrics}
+                        if validation_metrics is not None
+                        else None
+                    )
+                    self.log.append_loss(
+                        epoch,
+                        loss_total=L_mean,
+                        loss_l1=L1_mean,
+                        loss_l2=L2_mean,
+                        extra=extra,
+                    )
+                except Exception:
+                    pass
             if epoch in clear_epochs:
                 clear_output(wait=True)
