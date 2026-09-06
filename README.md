@@ -89,19 +89,27 @@ consider `--no-load-to-memory` and a modest `--prefetch-factor`.
 
 ### Biowulf batch example
 
-An editable template is provided at `scripts/biowulf_train.sbatch`. After
-adjusting its repository, input, output, environment, GPU, memory, and time
-settings, submit it with:
+`scripts/biowulf_train.sbatch` is a command-line version of
+`notebooks/train_gen.ipynb`: it recursively trains one generalized model,
+validates after every epoch, retains each epoch checkpoint by default, and
+automatically resumes from the latest complete bundle. Submit it from the
+repository root with separate training and held-out validation paths:
 
 ```bash
-sbatch scripts/biowulf_train.sbatch
+sbatch scripts/biowulf_train.sbatch \
+  --training-directory /data/$USER/training_tiffs \
+  --test-directory /data/$USER/validation_tiffs \
+  --dimensionality '3+1D' \
+  --exp-name calcium_4D
 ```
 
-To resume the template after `model_36.pth`, submit it with
-`sbatch --export=ALL,START_EPOCH=37 scripts/biowulf_train.sbatch`.
+The embedded Slurm defaults request one A100, 16 CPUs, 240 GB, and 24 hours.
+Resubmit the same command to resume; `--n-epochs` specifies the final total.
+See `scripts/README.md` for dry runs, output layout, validation metrics,
+environment overrides, checkpoint promotion, and recovery guidance.
 
-Slurm sets `CUDA_VISIBLE_DEVICES`; `run.py` intentionally leaves that allocation
-unchanged. It uses `SLURM_CPUS_PER_TASK` as the default DataLoader worker count.
+Slurm sets `CUDA_VISIBLE_DEVICES`; the batch runner leaves that allocation
+unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
 
 ## Running the Notebook
 

@@ -271,7 +271,10 @@ class TrainingClass():
         """
         noisy_imgs = []
         print("\033[1;31mLoaded Files -----> \033[0m")
-        if self.is_dir:
+        frozen_input_paths = getattr(self, "_frozen_input_paths", None)
+        if frozen_input_paths is not None:
+            noisy_paths = [Path(path) for path in frozen_input_paths]
+        elif self.is_dir:
             path_iterator = (
                 Path(self.in_path).rglob('*')
                 if self.train_gen

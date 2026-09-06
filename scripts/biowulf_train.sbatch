@@ -1,44 +1,42 @@
 #!/bin/bash
-#SBATCH --job-name=support-generalized
+#SBATCH --job-name=support-train
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:a100:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128g
-#SBATCH --time=2-00:00:00
-#SBATCH --output=support-%x-%j.out
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=240g
+#SBATCH --time=1-00:00:00
+#SBATCH --output=support-train-%j.out
 
 set -euo pipefail
 
-# Adjust these paths for your Biowulf account.
-REPO_DIR="/data/${USER}/SUPPORT"
-INPUT_DIR="/data/${USER}/support_training"
-OUTPUT_DIR="/data/${USER}/support_models"
-START_EPOCH="${START_EPOCH:-0}"
+# Submit from the SUPPORT repository, or override these locations with:
+#   SUPPORT_REPO_DIR, SUPPORT_CONDA_SH, and SUPPORT_CONDA_ENV.
+REPO_DIR="${SUPPORT_REPO_DIR:-${SLURM_SUBMIT_DIR:-/data/${USER}/SUPPORT}}"
+CONDA_SH="${SUPPORT_CONDA_SH:-/data/${USER}/conda/etc/profile.d/conda.sh}"
+CONDA_ENV="${SUPPORT_CONDA_ENV:-SUPPORT}"
+
+if [[ ! -f "${REPO_DIR}/scripts/biowulf_train.py" ]]; then
+    echo "SUPPORT runner not found at ${REPO_DIR}/scripts/biowulf_train.py" >&2
+    echo "Submit from the repository root or set SUPPORT_REPO_DIR." >&2
+    exit 2
+fi
+
+if [[ ! -f "${CONDA_SH}" ]]; then
+    echo "Conda initialization script not found at ${CONDA_SH}" >&2
+    echo "Set SUPPORT_CONDA_SH to your conda/etc/profile.d/conda.sh path." >&2
+    exit 2
+fi
 
 module purge
-source "/data/${USER}/conda/etc/profile.d/conda.sh"
-conda activate SUPPORT
-
+source "${CONDA_SH}"
+conda activate "${CONDA_ENV}"
 cd "${REPO_DIR}"
 
 export PYTHONUNBUFFERED=1
+export PYTHONPATH="${REPO_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export MPLBACKEND=Agg
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# Memory mapping is safer for a large multi-file training directory. Remove
-# --no-load-to-memory below if the complete dataset comfortably fits in RAM.
-python -u run.py \
-  --in-path "${INPUT_DIR}" \
-  --out-dir "${OUTPUT_DIR}" \
-  --exp-name generalized \
-  --dimensionality "2+1D" \
-  --n-epochs 100 \
-  --epoch "${START_EPOCH}" \
-  --n-cpu "${SLURM_CPUS_PER_TASK:-2}" \
-  --prefetch-factor 2 \
-  --no-load-to-memory
-
-# To resume after model_36.pth was saved:
-# sbatch --export=ALL,START_EPOCH=37 scripts/biowulf_train.sbatch
+exec python -u scripts/biowulf_train.py "$@"

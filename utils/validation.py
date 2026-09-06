@@ -66,9 +66,21 @@ class ValidationTracker:
         "validation_elements",
     )
 
-    def __init__(self, test_dir, test_params, output_dir=None):
+    def __init__(
+        self, test_dir, test_params, output_dir=None, validation_paths=None
+    ):
         self.test_root = Path(test_dir).expanduser().resolve()
-        self.validation_paths = discover_tiffs(self.test_root)
+        if validation_paths is None:
+            self.validation_paths = discover_tiffs(self.test_root)
+        else:
+            self.validation_paths = [
+                Path(path).expanduser().resolve() for path in validation_paths
+            ]
+            if not self.validation_paths:
+                raise ValueError("At least one frozen validation TIFF is required.")
+            for path in self.validation_paths:
+                if not path.is_file() or path.suffix.lower() not in TIFF_SUFFIXES:
+                    raise ValueError(f"Frozen validation input is not a TIFF file: {path}")
         self.test_params = dict(test_params)
         self.output_dir = (
             Path(output_dir).expanduser().resolve()
