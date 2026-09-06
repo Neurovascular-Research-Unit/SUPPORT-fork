@@ -1,7 +1,7 @@
 {
   "3+1D": {
     "train": {
-      "n_epochs": 7,
+      "n_epochs": 10,
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 512,
@@ -57,13 +57,13 @@
   },
   "2+1D": {
     "train": {
-      "n_epochs": 7,
+      "n_epochs": 10,
       "patch_size": [91, 128, 128],
       "patch_interval": [1, 64, 64],
       "batch_size": 512,
       "load_to_memory": true,
-      "pin_memory": true,
-      "prefetch_factor": 8,
+      "pin_memory": false,
+      "prefetch_factor": 6,
       "lr": 5e-4,
       "depth": 5,
       "bc_channels": 64,
@@ -78,8 +78,8 @@
     "test": {
       "patch_interval": [1, 24, 24],
       "batch_size": 512,
-      "pin_memory": true,
-      "prefetch_factor": 8,
+      "pin_memory": false,
+      "prefetch_factor": 6,
       "pad": "False"
     }
   }

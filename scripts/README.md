@@ -120,6 +120,63 @@ sbatch scripts/biowulf_train.sbatch \
   --exp-name calcium_4D
 ```
 
+#### Optional Slack notifications
+
+Training can post an initial job summary, the beginning and successful end of
+each epoch, current training/validation losses, a compact loss curve, final
+completion, and ordinary Python failures. Notifications are disabled by
+default and do not affect checkpoint/resume identity.
+
+A Slack Incoming Webhook URL is a bearer secret. Do not put it in this
+repository, a notebook cell, a command-line URL argument, or a Slurm output
+file. Create or rotate the Incoming Webhook, then store the new plain URL as
+the only line of a private file on Biowulf:
+
+```bash
+install -d -m 700 /data/$USER/.secrets
+nano /data/$USER/.secrets/support-slack-webhook
+chmod 600 /data/$USER/.secrets/support-slack-webhook
+```
+
+`requests` is now a direct dependency in `environment.yml`. If the existing
+Biowulf environment predates this change and does not already provide it, run
+`conda install -n SUPPORT requests` once before submitting.
+
+Enable notifications by passing that file path. The file path is not secret;
+its contents are never printed, added to trainer parameters, or saved in the
+run manifest:
+
+```bash
+sbatch scripts/biowulf_train.sbatch \
+  --training-directory /data/$USER/training_tiffs \
+  --test-directory /data/$USER/validation_tiffs \
+  --dimensionality '3+1D' \
+  --exp-name calcium_4D \
+  --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
+```
+
+Alternatively, use `--slack-notifications` and set
+`SUPPORT_SLACK_WEBHOOK_FILE` before submission. An environment-only
+`SUPPORT_SLACK_WEBHOOK_URL` is supported as a less-preferred fallback. Do not
+type the secret URL directly into an `sbatch --export` command because it can
+remain in shell history.
+
+After each completed epoch, the notification contains comparable Unicode
+sparklines for training and validation losses. A full PNG is atomically updated
+at `<experiment>/<exp_name>_loss.png`. Incoming Webhooks cannot upload that
+local PNG; Slack file upload would require a separate bot token and channel, so
+the webhook message reports the shared-filesystem path instead.
+
+Webhook/network/plot failures only produce a redacted warning and never stop
+training. The runner can report normal Python exceptions, including DataLoader
+errors, before re-raising them. No in-process notifier can guarantee a message
+after `SIGKILL`, node loss, kernel death, total network loss, or an abrupt power
+failure.
+
+For `train_gen.ipynb`, set `slack_notifications = True` in its configuration
+cell and arrange `SUPPORT_SLACK_WEBHOOK_FILE` before launching Jupyter. Keep the
+URL itself out of the notebook because saved cells and outputs persist.
+
 `--n-epochs` is the final total, not a number of additional epochs. The value
 defaults to the selected `gen_parameters.json` section. There is no longer a
 `START_EPOCH` setting: resubmit the same command and the trainer automatically
@@ -173,6 +230,7 @@ notebooks/outputs/calcium_4D/
 ├── calcium_4D_train_losses.csv
 ├── calcium_4D_train_validation_losses.csv
 ├── calcium_4D_validation_files.csv
+├── calcium_4D_loss.png             # when Slack notifications are enabled
 ├── pth/
 │   ├── model_0.pth
 │   ├── optimizer_0.pth

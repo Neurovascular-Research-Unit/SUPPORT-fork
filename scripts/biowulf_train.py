@@ -720,6 +720,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="train without CUDA (intended only for small debugging runs)",
     )
     parser.add_argument(
+        "--slack-notifications",
+        action="store_true",
+        help=(
+            "post start, epoch, completion, and failure updates through a Slack "
+            "Incoming Webhook"
+        ),
+    )
+    parser.add_argument(
+        "--slack-webhook-file",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help=(
+            "private mode-0600 file containing the webhook URL; implies "
+            "--slack-notifications (default source: SUPPORT_SLACK_WEBHOOK_FILE)"
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="validate inputs and print the resolved run without creating outputs",
@@ -1668,7 +1686,7 @@ def prepare_output_destinations(configuration: TrainingConfiguration) -> None:
             )
 
 
-def run_training(configuration: TrainingConfiguration) -> None:
+def run_training(configuration: TrainingConfiguration, slack_notifier=None) -> None:
     validate_namespace_registry_location(configuration)
     # Set these before importing torch through the training modules.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -1686,45 +1704,92 @@ def run_training(configuration: TrainingConfiguration) -> None:
 
     trainer = None
     validation_tracker = None
-    with exclusive_training_locks(
-        configuration.experiment_directory,
-        configuration.validation_output_directory,
-    ) as (lock_paths, namespace_registry):
-        print("Exclusive run locks: " + ", ".join(str(path) for path in lock_paths))
-        print(f"Hierarchical namespace registry: {namespace_registry}")
-        manifest_state = validate_run_manifest(configuration, commit=True)
-        print(
-            f"Run manifest: {configuration.experiment_directory / RUN_MANIFEST_NAME} "
-            f"({manifest_state})"
-        )
-        prepare_output_destinations(configuration)
-        try:
-            trainer = TrainingClass(configuration.training_parameters)
-            trainer._frozen_input_paths = tuple(
-                str(description.path) for description in configuration.training_tiffs
-            )
-            trainer.vars_dict()
-            validation_tracker = ValidationTracker(
-                test_dir=str(configuration.validation_path),
-                test_params=configuration.validation_parameters,
-                output_dir=str(configuration.validation_output_directory),
-                validation_paths=tuple(
-                    str(description.path)
-                    for description in configuration.validation_tiffs
-                ),
-            )
-            trainer.epoch_end_callback = validation_tracker
+    try:
+        with exclusive_training_locks(
+            configuration.experiment_directory,
+            configuration.validation_output_directory,
+        ) as (lock_paths, namespace_registry):
+            print("Exclusive run locks: " + ", ".join(str(path) for path in lock_paths))
+            print(f"Hierarchical namespace registry: {namespace_registry}")
+            manifest_state = validate_run_manifest(configuration, commit=True)
             print(
-                f"Found {len(validation_tracker.validation_paths)} held-out "
-                "validation TIFF(s)."
+                f"Run manifest: {configuration.experiment_directory / RUN_MANIFEST_NAME} "
+                f"({manifest_state})"
             )
-            trainer.run()
-        finally:
-            if trainer is not None:
-                trainer.release_resources()
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            prepare_output_destinations(configuration)
+            try:
+                trainer = TrainingClass(configuration.training_parameters)
+                trainer._frozen_input_paths = tuple(
+                    str(description.path)
+                    for description in configuration.training_tiffs
+                )
+                trainer.vars_dict()
+                validation_tracker = ValidationTracker(
+                    test_dir=str(configuration.validation_path),
+                    test_params=configuration.validation_parameters,
+                    output_dir=str(configuration.validation_output_directory),
+                    validation_paths=tuple(
+                        str(description.path)
+                        for description in configuration.validation_tiffs
+                    ),
+                )
+                trainer.epoch_end_callback = validation_tracker
+                if slack_notifier is not None and slack_notifier.enabled:
+                    trainer.epoch_start_callback = (
+                        slack_notifier.notify_epoch_started
+                    )
+
+                    def notify_epoch_completed(
+                        active_trainer,
+                        epoch,
+                        training_metrics,
+                        validation_metrics,
+                    ):
+                        slack_notifier.notify_epoch_completed(
+                            active_trainer,
+                            epoch,
+                            training_metrics,
+                            validation_metrics,
+                            history=tuple(validation_tracker.history),
+                        )
+
+                    trainer.epoch_complete_callback = notify_epoch_completed
+                print(
+                    f"Found {len(validation_tracker.validation_paths)} held-out "
+                    "validation TIFF(s)."
+                )
+                if slack_notifier is not None:
+                    slack_notifier.notify_run_started(
+                        trainer,
+                        training_count=len(configuration.training_tiffs),
+                        validation_count=len(validation_tracker.validation_paths),
+                    )
+                try:
+                    trainer.run()
+                except BaseException as exc:
+                    # Notify before DataLoader/GPU teardown, which can itself
+                    # abort after a worker failure.
+                    if slack_notifier is not None:
+                        slack_notifier.notify_failure(
+                            exc,
+                            trainer=trainer,
+                            stage="training or validation",
+                        )
+                    raise
+            finally:
+                if trainer is not None:
+                    trainer.release_resources()
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+    except BaseException as exc:
+        if slack_notifier is not None:
+            slack_notifier.notify_failure(
+                exc,
+                trainer=trainer,
+                stage="initialization or training",
+            )
+        raise
 
     if trainer is not None:
         print(f"Training complete. Checkpoints: {trainer.pth_dir}")
@@ -1740,25 +1805,60 @@ def run_training(configuration: TrainingConfiguration) -> None:
         )
         print(f"Paired loss history: {history_csv}")
         print(f"Per-file validation history: {per_file_csv}")
+    if slack_notifier is not None and trainer is not None:
+        slack_notifier.notify_run_completed(trainer)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    configuration = build_configuration(args, parser)
+    from utils.slack_notifications import (
+        SlackConfigurationError,
+        SlackNotifier,
+    )
+
+    slack_enabled = bool(args.slack_notifications or args.slack_webhook_file)
+    try:
+        slack_notifier = SlackNotifier.from_environment(
+            enabled=slack_enabled,
+            webhook_file=args.slack_webhook_file,
+        )
+    except SlackConfigurationError as exc:
+        parser.error(str(exc))
+    try:
+        configuration = build_configuration(args, parser)
+    except SystemExit:
+        if slack_notifier.enabled and not args.dry_run:
+            slack_notifier.notify_failure(
+                RuntimeError("argument or TIFF preflight failed; see the Slurm log"),
+                stage="configuration preflight",
+            )
+        raise
     try:
         manifest_state = validate_run_manifest(configuration, commit=False)
     except TrainingLaunchError as exc:
+        if slack_notifier.enabled and not args.dry_run:
+            slack_notifier.notify_failure(exc, stage="run-state preflight")
         parser.error(str(exc))
     print_configuration(configuration, args.dry_run)
     print(f"Run-state preflight: {manifest_state}")
+    print(
+        "Slack notifications: "
+        + ("enabled" if slack_notifier.enabled else "disabled")
+    )
     if args.dry_run:
         return 0
     try:
-        run_training(configuration)
+        run_training(configuration, slack_notifier=slack_notifier)
     except TrainingLaunchError as exc:
+        slack_notifier.notify_failure(exc, stage="training launch")
         print(f"Training configuration error: {exc}", file=sys.stderr)
         return 2
+    except BaseException as exc:
+        # run_training normally reports with richer trainer context. This is a
+        # deduplicated fallback for failures before that protected section.
+        slack_notifier.notify_failure(exc, stage="batch runner")
+        raise
     return 0
 
 

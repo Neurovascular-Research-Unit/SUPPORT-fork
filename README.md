@@ -105,8 +105,13 @@ sbatch scripts/biowulf_train.sbatch \
 
 The embedded Slurm defaults request one A100, 16 CPUs, 240 GB, and 24 hours.
 Resubmit the same command to resume; `--n-epochs` specifies the final total.
+Optional Slack start, per-epoch loss, completion, and failure updates can be
+enabled with `--slack-webhook-file /path/to/private-mode-0600-file`. Keep the
+webhook URL itself out of commands and notebooks. The generalized training
+notebook has an equivalent `slack_notifications = False` setting.
 See `scripts/README.md` for dry runs, output layout, validation metrics,
-environment overrides, checkpoint promotion, and recovery guidance.
+Slack setup, environment overrides, checkpoint promotion, and recovery
+guidance.
 
 Slurm sets `CUDA_VISIBLE_DEVICES`; the batch runner leaves that allocation
 unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.

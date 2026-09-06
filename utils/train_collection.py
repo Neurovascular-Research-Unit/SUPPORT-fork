@@ -50,6 +50,11 @@ class TrainingClass():
         # Backward-compatible alias for callers that used the earlier API.
         self.save_every_epoch = False
         self.epoch_end_callback = None
+        # Optional, noncritical lifecycle hooks (for example Slack updates).
+        # Validation remains on epoch_end_callback because its success is part
+        # of committing a complete epoch.
+        self.epoch_start_callback = None
+        self.epoch_complete_callback = None
         self.rnd_seed = 0
         self.cuda_device = [0]
         
@@ -107,6 +112,10 @@ class TrainingClass():
             self.checkpoints = True
         if self.epoch_end_callback is not None and not callable(self.epoch_end_callback):
             raise TypeError("epoch_end_callback must be callable or None")
+        for callback_name in ("epoch_start_callback", "epoch_complete_callback"):
+            callback = getattr(self, callback_name)
+            if callback is not None and not callable(callback):
+                raise TypeError(f"{callback_name} must be callable or None")
         if self.train_gen and not self.is_dir:
             raise ValueError("train_gen requires in_path to be a directory")
         self.normalization_scope = "dataset" if self.train_gen else "per_stack"
@@ -133,6 +142,22 @@ class TrainingClass():
         if num_workers > 0:
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
+
+    def _run_optional_callback(self, callback_name, *args):
+        """Run a noncritical lifecycle callback without risking training."""
+        callback = getattr(self, callback_name, None)
+        if callback is None:
+            return
+        try:
+            callback(*args)
+        except Exception as exc:
+            # Do not print exception text: notification exceptions can contain
+            # a secret webhook URL.
+            print(
+                f"WARNING: {callback_name} failed ({type(exc).__name__}); "
+                "training will continue.",
+                file=sys.stderr,
+            )
         
     def vars_dict(self): self.prepare_file()
 
@@ -794,6 +819,11 @@ class TrainingClass():
         start_epoch = self.epoch
         for epoch in range(start_epoch, self.n_epochs):
             self.epoch = epoch
+            self._run_optional_callback(
+                "epoch_start_callback",
+                self,
+                epoch,
+            )
             self.dataloader.dataset.precompute_indices()
             self.train()
             t_inter = int(time.mktime(time.localtime()) - t_init)
@@ -849,5 +879,12 @@ class TrainingClass():
                     )
                 except Exception:
                     pass
+            self._run_optional_callback(
+                "epoch_complete_callback",
+                self,
+                epoch,
+                training_metrics,
+                validation_metrics,
+            )
             if epoch in clear_epochs:
                 clear_output(wait=True)
