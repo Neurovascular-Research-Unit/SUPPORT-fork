@@ -80,9 +80,10 @@ python -u run.py \
   --epoch 37
 ```
 
-`--n-epochs` is the final total, not the number of additional epochs. A job that
-stops during an epoch resumes from the last completed epoch and repeats the
-interrupted epoch. Use the same model parameters and AMP setting when resuming.
+`--n-epochs` is the final total, not the number of additional epochs. A
+generalized job that stops during an epoch restores its newest rolling batch
+checkpoint and repeats the interrupted epoch; normal training restores the last
+completed epoch. Use the same model parameters and AMP setting when resuming.
 Run `python run.py --help` for runtime overrides including batch size, patch size,
 worker count, prefetching, and memory mapping. For large directory datasets,
 consider `--no-load-to-memory` and a modest `--prefetch-factor`.
@@ -91,7 +92,8 @@ consider `--no-load-to-memory` and a modest `--prefetch-factor`.
 
 `scripts/biowulf_train.sbatch` is a command-line version of
 `notebooks/train_gen.ipynb`: it recursively trains one generalized model,
-validates after every epoch, retains each epoch checkpoint by default, and
+writes one rolling batch checkpoint at four quartile points per epoch, saves
+and retains each permanent epoch checkpoint before validation, and
 automatically resumes from the latest complete bundle. Submit it from the
 repository root with separate training and held-out validation paths:
 
@@ -103,8 +105,13 @@ sbatch scripts/biowulf_train.sbatch \
   --exp-name calcium_4D
 ```
 
-The embedded Slurm defaults request one A100, 16 CPUs, 240 GB, and 24 hours.
-Resubmit the same command to resume; `--n-epochs` specifies the final total.
+The embedded Slurm defaults request one A100, 16 CPUs, 240 GB, 24 hours, and
+200 GB of ephemeral node-local scratch for offloading normalized training data
+during validation. To change scratch capacity, keep the complete Slurm override
+before the script path, for example
+`sbatch --gres=gpu:a100:1,lscratch:300 scripts/biowulf_train.sbatch ...`.
+Resubmit the same command to resume; `--n-epochs` specifies the final total and
+the job rebuilds its temporary scratch cache.
 Optional Slack start, per-epoch loss, completion, and failure updates can be
 enabled with `--slack-webhook-file /path/to/private-mode-0600-file`. Keep the
 webhook URL itself out of commands and notebooks. The generalized training
@@ -195,15 +202,18 @@ unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
 
    A checkpoint bundle contains the model, optimizer, and AMP scaler when AMP is
    enabled. In normal mode, `rm_intermediaries` controls whether older epoch
-   bundles are retained. In generalized mode with `checkpoints = True`, a bundle
-   is saved at each of the four batch-quartile endpoints in every epoch. The new
-   bundle is saved completely before the preceding bundle is deleted, so the
-   latest complete quartile checkpoint remains available. If `resume` is enabled
+   bundles are retained. In generalized mode with `checkpoints = True`, one
+   rolling bundle is saved at each of the four batch-quartile endpoints in every
+   epoch. The new batch bundle is saved completely before the preceding rolling
+   bundle is deleted; permanent epoch bundles are not touched. With
+   `save_every_epoch = True`, a separate permanent bundle is saved at the epoch
+   boundary before validation and retained by default. If `resume` is enabled
    but no complete bundle exists, training starts from epoch 0. When
    `checkpoints` is disabled, one final bundle is still saved for testing and
    possible later continuation. Resume generalized training with the same input
-   data and batch settings; a mid-epoch checkpoint safely repeats that epoch,
-   while a final-quartile checkpoint continues with the next epoch.
+   data and batch settings; a mid-epoch checkpoint preserves the newest weights
+   but safely repeats that epoch, while a final-quartile checkpoint continues
+   with the next epoch.
 
    In the following personalization cell, you can adjust system-specific
    parameters:
@@ -245,8 +255,9 @@ unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
      `<exp_name>_train.log`. `L_mean` is the combined training loss. The same log
      records the shared training mean, standard deviation, and voxel count.
    - Normal-mode checkpoints are written at epoch boundaries. Generalized-mode
-     checkpoints are written at the four batch-quartile endpoints and each new
-     complete bundle replaces the preceding one.
+     rolling checkpoints are written at the four batch-quartile endpoints; each
+     new complete batch bundle replaces only the preceding rolling bundle, while
+     permanent epoch checkpoints remain retained.
 
 9. **View results**:
    - After testing, denoised/enhanced TIFFs are saved with `_SPRT.tif` appended to their stem

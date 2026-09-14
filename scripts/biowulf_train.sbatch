@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=support-train
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:a100:1,lscratch:200
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=240g
 #SBATCH --time=1-00:00:00
@@ -26,6 +26,23 @@ if [[ ! -f "${CONDA_SH}" ]]; then
     echo "Set SUPPORT_CONDA_SH to your conda/etc/profile.d/conda.sh path." >&2
     exit 2
 fi
+
+if [[ -z "${SLURM_JOB_ID:-}" ]]; then
+    echo "SLURM_JOB_ID is not set; run this script through sbatch." >&2
+    exit 2
+fi
+
+JOB_SCRATCH="/lscratch/${SLURM_JOB_ID}"
+if [[ ! -d "${JOB_SCRATCH}" || ! -w "${JOB_SCRATCH}" ]]; then
+    echo "Allocated local scratch is unavailable or not writable: ${JOB_SCRATCH}" >&2
+    echo "Request lscratch together with the GPU in one --gres option." >&2
+    exit 2
+fi
+
+TRAINING_CACHE_DIR="${JOB_SCRATCH}/support-training"
+install -d -m 700 "${TRAINING_CACHE_DIR}"
+export TMPDIR="${TRAINING_CACHE_DIR}"
+export SUPPORT_TRAINING_CACHE_DIR="${TRAINING_CACHE_DIR}"
 
 module purge
 source "${CONDA_SH}"

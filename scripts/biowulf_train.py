@@ -481,8 +481,9 @@ def normalize_bool(value: Any, name: str) -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Train one generalized SUPPORT model from recursive TIFFs, validate "
-            "after every epoch, and retain resumable epoch checkpoints."
+            "Train one generalized SUPPORT model from recursive TIFFs, write a "
+            "rolling checkpoint four times per epoch, save the permanent epoch "
+            "checkpoint, and then validate it."
         )
     )
     parser.add_argument(
@@ -1399,6 +1400,18 @@ def print_configuration(configuration: TrainingConfiguration, dry_run: bool) -> 
     print(f"Validation outputs: {configuration.validation_output_directory}")
     print(f"Final epoch count: {configuration.training_parameters['n_epochs']}")
     print(f"Training workers: {configuration.training_parameters['n_cpu']}")
+    if configuration.training_parameters["load_to_memory"]:
+        cache_bytes = sum(
+            math.prod(description.shape) * 4
+            for description in configuration.training_tiffs
+        )
+        print(
+            "Normalized scratch cache estimate: "
+            f"{cache_bytes / (1024 ** 3):.2f} GiB "
+            f"({cache_bytes / 1_000_000_000:.2f} GB), plus cache headroom"
+        )
+    else:
+        print("Normalized scratch cache: skipped (--no-load-to-memory)")
     print(
         "Automatic resume: "
         + ("enabled" if configuration.training_parameters["resume"] else "disabled")
@@ -1410,6 +1423,10 @@ def print_configuration(configuration: TrainingConfiguration, dry_run: bool) -> 
             if configuration.training_parameters["rm_intermediaries"]
             else "every completed epoch"
         )
+    )
+    print(
+        "Rolling batch checkpoints: four quartile saves per epoch "
+        "(only the newest batch bundle is retained)"
     )
     if dry_run:
         print("No output directories, checkpoints, logs, or TIFFs were changed.")

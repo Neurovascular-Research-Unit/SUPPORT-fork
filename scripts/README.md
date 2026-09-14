@@ -7,6 +7,15 @@ resources by default:
 1 A100 GPU, 16 CPUs, 240 GB memory, 24 hours
 ```
 
+The training job additionally requests 200 GB of job-local `/lscratch` for an
+ephemeral normalized-training-data cache. This cache lets the trainer release
+the in-memory training corpus during validation and reload it afterward without
+rereading shared storage. It is recreated for every job and automatically
+deleted when that job exits; checkpoints, logs, CSVs, outputs, and source TIFFs
+remain on shared `/data`. With `--no-load-to-memory`, the trainer attempts to
+memory-map the TIFFs and skips this normalized-tensor cache; TIFF layouts that
+cannot be memory-mapped may still require an in-memory fallback.
+
 Slurm resource overrides belong before the script path; SUPPORT runner options
 belong after it. Both jobs expect the repository in `SLURM_SUBMIT_DIR` (normally
 submit from `/data/$USER/SUPPORT`), the conda initialization script at
@@ -18,9 +27,8 @@ Set `SUPPORT_REPO_DIR`, `SUPPORT_CONDA_SH`, or `SUPPORT_CONDA_ENV` through
 
 `biowulf_train.sbatch` is the non-notebook equivalent of
 `notebooks/train_gen.ipynb`. It trains one generalized model from every TIFF
-below a training directory, validates the current in-memory model against every
-held-out TIFF after each epoch, and only then saves that epoch's complete
-checkpoint bundle.
+below a training directory, saves that epoch's complete checkpoint bundle, and
+then validates the same model against every held-out TIFF.
 
 Training and validation search recursively for case-insensitive `.tif` and
 `.tiff` extensions. The training input must be a directory; the validation
@@ -41,7 +49,18 @@ The runner reads copied `train` and `test` dictionaries from
 notebook: generalized normalization across the training corpus, validation
 after every epoch, automatic resume, and retention of every completed epoch's
 model/optimizer/(when AMP is enabled) scaler bundle. `--keep-only-latest` is an
-explicit disk-saving opt-out from retaining all bundles.
+explicit disk-saving opt-out from retaining all bundles; the preceding clean
+epoch is still kept while the next epoch is in progress and is pruned only when
+the new permanent epoch bundle commits.
+
+During each epoch, the trainer also writes a complete rolling batch bundle at
+the 25%, 50%, 75%, and 100% batch endpoints. Each new batch bundle is committed
+before the preceding rolling bundle is removed, and permanent epoch bundles are
+left intact. Thus only one batch bundle is retained at a time; the permanent
+epoch save supersedes it immediately before validation. An epoch with fewer
+than four batches has only that many distinct checkpoint points. A mid-epoch
+resume loads the newest rolling weights and safely repeats that epoch because
+DataLoader/sampler state is not checkpointed.
 
 Validation loss is self-supervised against held-out noisy center pixels, not
 clean ground truth. It uses the training corpus's shared normalization and
@@ -83,8 +102,9 @@ find /data/$USER/validation_tiffs -type f \
   \( -iname '*.tif' -o -iname '*.tiff' \) -print | LC_ALL=C sort
 ```
 
-Then activate the environment and preflight every TIFF header, path guard, and
-resolved setting without creating an output directory:
+Then activate the environment and preflight every TIFF header, path guard,
+resolved setting, and normalized float32 scratch-cache estimate without
+creating an output directory:
 
 ```bash
 source /data/$USER/conda/etc/profile.d/conda.sh
@@ -119,6 +139,27 @@ sbatch scripts/biowulf_train.sbatch \
   --dimensionality '3+1D' \
   --exp-name calcium_4D
 ```
+
+The default 200 GB local-scratch allocation must be large enough for the
+normalized float32 training corpus plus the headroom reported by the dry run.
+Request at least that displayed amount rather than relying on otherwise free
+node disk. To change it, put the Slurm override before the script path and keep
+the GPU and scratch requests together because a command-line `--gres` replaces
+the embedded value:
+
+```bash
+sbatch --gres=gpu:a100:1,lscratch:300 scripts/biowulf_train.sbatch \
+  --training-directory /data/$USER/training_tiffs \
+  --test-directory /data/$USER/validation_tiffs \
+  --dimensionality '3+1D' \
+  --exp-name calcium_4D
+```
+
+Inside the allocation, both `TMPDIR` and `SUPPORT_TRAINING_CACHE_DIR` point to
+the private `/lscratch/$SLURM_JOB_ID/support-training` directory. Do not place
+anything there that must survive cancellation, node failure, or normal job
+completion. A resumed job receives a new empty cache and reconstructs it from
+the unchanged training TIFFs on `/data`.
 
 #### Optional Slack notifications
 
@@ -180,9 +221,12 @@ URL itself out of the notebook because saved cells and outputs persist.
 `--n-epochs` is the final total, not a number of additional epochs. The value
 defaults to the selected `gen_parameters.json` section. There is no longer a
 `START_EPOCH` setting: resubmit the same command and the trainer automatically
-continues after the latest complete bundle. If a job ends during training or
-validation, the current epoch repeats; validation deliberately finishes before
-that epoch checkpoint is committed.
+continues after the latest complete bundle. Each epoch's model/optimizer/(when
+AMP is enabled) scaler bundle is committed before validation starts. If a job
+ends during training, the newest rolling bundle is loaded and that unfinished
+epoch repeats. If it ends during validation, a small atomic pending-validation
+record remains beside the checkpoint; resubmitting reloads the saved epoch,
+retries only its validation, and then advances to the next training epoch.
 
 The first launch atomically creates `.biowulf_train_config.json`. It records the
 effective train/test settings, parameter-file hash, validation destinations,
@@ -232,9 +276,13 @@ notebooks/outputs/calcium_4D/
 ├── calcium_4D_validation_files.csv
 ├── calcium_4D_loss.png             # when Slack notifications are enabled
 ├── pth/
+│   ├── .pending_validation.json    # only while validation is pending
 │   ├── model_0.pth
 │   ├── optimizer_0.pth
 │   ├── scaler_0.pth
+│   ├── model_1_batch_2134.pth      # one rolling bundle during an epoch
+│   ├── optimizer_1_batch_2134.pth
+│   ├── scaler_1_batch_2134.pth
 │   └── ...
 └── validation/
     ├── .biowulf_validation.lock
@@ -242,8 +290,9 @@ notebooks/outputs/calcium_4D/
 ```
 
 Checkpoint indices are zero-based. Keeping every bundle can consume substantial
-quota, so monitor `checkquota` and the `pth` directory. To promote a chosen
-model for `biowulf_test.sbatch`, copy only its model state into
+quota, and each quartile briefly writes a new bundle before deleting the old
+rolling one, so monitor `checkquota` and the `pth` directory. To promote a
+chosen model for `biowulf_test.sbatch`, copy only its model state into
 `pretrained_models` using the test runner's convention, for example:
 
 ```bash
@@ -266,7 +315,8 @@ sacct -j JOB_ID
 
 Validation outputs can temporarily represent a mix of epochs if a job stops
 mid-validation. The paired CSV is written only after all validation files
-finish; resubmitting repeats the epoch and refreshes the complete set.
+finish; resubmitting reuses the already-saved checkpoint, reruns that epoch's
+validation files in full, and refreshes the complete set without retraining.
 
 ## Pretrained-model TIFF denoising
 

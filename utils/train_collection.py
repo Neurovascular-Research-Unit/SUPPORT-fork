@@ -2,8 +2,13 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import gc
+import hashlib
+import json
 import os
 import re
+import shutil
+import stat
 import tempfile
 import numpy as np
 import tifffile
@@ -47,12 +52,13 @@ class TrainingClass():
         self.resume = False
         self.rm_intermediaries = False
         self.train_gen = False
-        # Backward-compatible alias for callers that used the earlier API.
+        # Permanent epoch snapshots; generalized quartile checkpoints roll
+        # independently whenever checkpointing is enabled.
         self.save_every_epoch = False
         self.epoch_end_callback = None
         # Optional, noncritical lifecycle hooks (for example Slack updates).
-        # Validation remains on epoch_end_callback because its success is part
-        # of committing a complete epoch.
+        # Validation remains on epoch_end_callback, but a resumable checkpoint
+        # is committed before that callback runs.
         self.epoch_start_callback = None
         self.epoch_complete_callback = None
         self.rnd_seed = 0
@@ -64,6 +70,11 @@ class TrainingClass():
         self.batch_size = 16
         self.load_to_memory = True
         self.pin_memory = True
+        # Generalized validation can need enough host RAM for another full TIFF.
+        # Retain an exact normalized copy on job-local scratch and drop the
+        # resident training tensors while the validation callback runs.
+        self.offload_training_data_during_validation = True
+        self.training_cache_dir = os.environ.get("SUPPORT_TRAINING_CACHE_DIR")
         
         # MODEL
         self.depth = 5
@@ -93,6 +104,11 @@ class TrainingClass():
         self.normalization_mean = None
         self.normalization_std = None
         self.normalization_voxel_count = None
+        self._training_cache_root = None
+        self._training_cache_files = ()
+        self._training_cache_owned = False
+        self._suspended_training_dataset = None
+        self._training_dataloader_batch_count = None
         self._checkpoint_controls_configured = any(
             key in params_dict
             for key in ("checkpoints", "resume", "rm_intermediaries", "save_every_epoch")
@@ -105,6 +121,7 @@ class TrainingClass():
             "train_gen",
             "save_every_epoch",
             "pin_memory",
+            "offload_training_data_during_validation",
         ):
             if type(getattr(self, option)) is not bool:
                 raise TypeError(f"{option} must be True or False")
@@ -138,6 +155,9 @@ class TrainingClass():
             "shuffle": shuffle,
             "num_workers": num_workers,
             "pin_memory": self.cuda and self.pin_memory,
+            # Exhausted epoch iterators shut workers/prefetch queues down before
+            # the validation boundary; a fresh iterator is created next epoch.
+            "persistent_workers": False,
         }
         if num_workers > 0:
             kwargs["prefetch_factor"] = self.prefetch_factor
@@ -162,20 +182,31 @@ class TrainingClass():
     def vars_dict(self): self.prepare_file()
 
     def release_resources(self):
-        if hasattr(self, "local_model"):
-            self.local_model.to("cpu")
-            del self.local_model
+        # Release the largest host allocation first so teardown itself does not
+        # run out of RAM while moving the comparatively small model off the GPU.
+        if hasattr(self, "dataloader"):
+            self._shutdown_dataloader_workers(self.dataloader)
+            del self.dataloader
+        suspended_dataset = getattr(self, "_suspended_training_dataset", None)
+        if suspended_dataset is not None:
+            suspended_dataset.noisy_imgs = []
+            suspended_dataset.precomputed_indices = None
+            self._suspended_training_dataset = None
+        gc.collect()
         if hasattr(self, "optimizer"):
             self.optimizer.state.clear()
             del self.optimizer
+        if hasattr(self, "local_model"):
+            self.local_model.to("cpu")
+            del self.local_model
         if hasattr(self, "scaler"):
             del self.scaler
-        if hasattr(self, "dataloader"):
-            del self.dataloader
         if hasattr(self, "Tensor"):
             del self.Tensor
         if hasattr(self, "rng"):
             del self.rng
+        self._remove_training_cache()
+        gc.collect()
         if self.cuda:
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
@@ -189,7 +220,14 @@ class TrainingClass():
         self.initialize_network()
         self.initialize_optimizer()
         self.load_checkpoint()
-        self.test()
+        try:
+            self._prepare_training_cache_for_run()
+            self.test()
+        except BaseException:
+            # Integrations also call release_resources(), but keep direct class
+            # callers from orphaning a large job-owned scratch tree on failure.
+            self._remove_training_cache()
+            raise
 
     def set_params(self, params_dict):
         # This is where I would implement overlap factor
@@ -314,6 +352,12 @@ class TrainingClass():
         noisy_paths = sorted(noisy_paths)
         if len(noisy_paths) == 0:
             raise FileNotFoundError(f'No TIFF files were found in {self.in_path}.')
+        if frozen_input_paths is None and self.train_gen:
+            # A fallback reload after validation must use the exact original
+            # file list rather than discovering additions made mid-run.
+            self._frozen_input_paths = tuple(
+                str(path.absolute()) for path in noisy_paths
+            )
         noisy_stems = [str(path.stem) for path in noisy_paths]
         slen = max((len(s) for s in noisy_stems), default=0)
 
@@ -350,6 +394,356 @@ class TrainingClass():
             dataset=dataset,
             **self._dataloader_kwargs(shuffle=True),
         )
+
+    @staticmethod
+    def _format_byte_count(byte_count):
+        value = float(byte_count)
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if value < 1024 or unit == "TiB":
+                return f"{value:.2f} {unit}"
+            value /= 1024
+
+    @staticmethod
+    def _drop_file_cache(file_handle):
+        """Best-effort eviction of scratch I/O pages from the Linux page cache."""
+        posix_fadvise = getattr(os, "posix_fadvise", None)
+        dontneed = getattr(os, "POSIX_FADV_DONTNEED", None)
+        if posix_fadvise is None or dontneed is None:
+            return
+        try:
+            posix_fadvise(file_handle.fileno(), 0, 0, dontneed)
+        except OSError:
+            # Correctness does not depend on this performance/memory hint.
+            pass
+
+    @staticmethod
+    def _array_sha256(array):
+        """Hash a contiguous array without allocating another full-size copy."""
+        byte_view = memoryview(array).cast("B")
+        digest = hashlib.sha256()
+        chunk_size = 16 * 1024 * 1024
+        for offset in range(0, byte_view.nbytes, chunk_size):
+            digest.update(byte_view[offset:offset + chunk_size])
+        return digest.hexdigest()
+
+    @staticmethod
+    def _cache_metadata_matches_array(metadata, array):
+        return (
+            tuple(array.shape) == tuple(metadata["shape"])
+            and array.dtype.str == metadata["dtype"]
+            and int(array.nbytes) == int(metadata["nbytes"])
+        )
+
+    def _training_cache_is_valid(self, cache_files, resident_stacks):
+        """Cheaply validate scratch files before releasing resident tensors."""
+        if len(cache_files) != len(resident_stacks):
+            return False
+        try:
+            for metadata, resident_stack in zip(cache_files, resident_stacks):
+                path = Path(metadata["path"])
+                path_stat = path.lstat()
+                if (
+                    path.is_symlink()
+                    or not stat.S_ISREG(path_stat.st_mode)
+                    or path_stat.st_size != int(metadata["file_size"])
+                ):
+                    return False
+                cached_array = np.load(path, mmap_mode="r", allow_pickle=False)
+                try:
+                    if not self._cache_metadata_matches_array(
+                        metadata, cached_array
+                    ):
+                        return False
+                    if isinstance(resident_stack, torch.Tensor):
+                        resident_shape = tuple(resident_stack.shape)
+                        resident_dtype = resident_stack.detach().numpy().dtype.str
+                        resident_nbytes = (
+                            resident_stack.numel() * resident_stack.element_size()
+                        )
+                    else:
+                        resident_array = np.asarray(resident_stack)
+                        resident_shape = tuple(resident_array.shape)
+                        resident_dtype = resident_array.dtype.str
+                        resident_nbytes = resident_array.nbytes
+                    if (
+                        resident_shape != tuple(metadata["shape"])
+                        or resident_dtype != metadata["dtype"]
+                        or int(resident_nbytes) != int(metadata["nbytes"])
+                    ):
+                        return False
+                finally:
+                    mapped_file = getattr(cached_array, "_mmap", None)
+                    if mapped_file is not None:
+                        mapped_file.close()
+        except (KeyError, OSError, TypeError, ValueError):
+            return False
+        return True
+
+    def _training_data_offload_enabled(self):
+        return (
+            bool(getattr(self, "offload_training_data_during_validation", True))
+            and bool(getattr(self, "load_to_memory", False))
+            and getattr(self, "epoch_end_callback", None) is not None
+        )
+
+    def _prepare_training_cache_for_run(self):
+        """Cache early when this job will reload data after a validation."""
+        if not self._training_data_offload_enabled():
+            return False
+        pending_validation = self._read_pending_validation()
+        if pending_validation is not None:
+            needs_reload = self.epoch < self.n_epochs
+        else:
+            needs_reload = self.epoch + 1 < self.n_epochs
+        if not needs_reload:
+            return False
+        return self._ensure_training_cache(self.dataloader.dataset)
+
+    def _resolve_training_cache_base(self):
+        configured = getattr(self, "training_cache_dir", None)
+        if not configured:
+            configured = os.environ.get("SUPPORT_TRAINING_CACHE_DIR")
+        if not configured:
+            job_id = os.environ.get("SLURM_JOB_ID")
+            if job_id:
+                allocated_scratch = Path("/lscratch") / job_id
+                if allocated_scratch.is_dir():
+                    configured = allocated_scratch / "support-training"
+        if not configured:
+            return None
+
+        cache_base = Path(configured).expanduser()
+        cache_base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not cache_base.is_dir():
+            raise RuntimeError(
+                f"Training cache path is not a directory: {cache_base}"
+            )
+        if not os.access(cache_base, os.W_OK | os.X_OK):
+            raise PermissionError(
+                f"Training cache directory is not writable: {cache_base}"
+            )
+        return cache_base.resolve()
+
+    def _ensure_training_cache(self, dataset):
+        """Write the normalized in-memory corpus to owned local scratch once."""
+        cache_files = tuple(getattr(self, "_training_cache_files", ()))
+        if cache_files:
+            if self._training_cache_is_valid(cache_files, dataset.noisy_imgs):
+                return True
+            print(
+                "WARNING: rebuilding an incomplete or invalid training scratch "
+                "cache before releasing resident data.",
+                file=sys.stderr,
+            )
+            self._remove_training_cache()
+
+        cache_base = self._resolve_training_cache_base()
+        if cache_base is None:
+            if not getattr(self, "_training_cache_warning_printed", False):
+                print(
+                    "WARNING: no training scratch cache is configured; training "
+                    "data will be reread and renormalized after each validation. "
+                    "Set SUPPORT_TRAINING_CACHE_DIR to enable exact scratch reloads.",
+                    file=sys.stderr,
+                )
+                self._training_cache_warning_printed = True
+            return False
+
+        arrays = []
+        required_bytes = 0
+        for stack in dataset.noisy_imgs:
+            if isinstance(stack, torch.Tensor):
+                if stack.device.type != "cpu":
+                    raise RuntimeError(
+                        "Training scratch caching requires CPU-resident tensors"
+                    )
+                array = stack.detach().numpy()
+            else:
+                array = np.asarray(stack)
+            if array.dtype != np.float32 or not array.flags.c_contiguous:
+                raise RuntimeError(
+                    "Training scratch caching requires contiguous float32 stacks"
+                )
+            arrays.append(array)
+            required_bytes += int(array.nbytes)
+        if not arrays:
+            raise RuntimeError("Cannot cache an empty training dataset")
+
+        # NPY headers are small, but reserve 1% plus 1 MiB per stack so a cache
+        # that only barely fits fails before any large write begins.
+        headroom = max(
+            int(required_bytes * 0.01),
+            len(arrays) * 1024 * 1024,
+        )
+        free_bytes = shutil.disk_usage(cache_base).free
+        if free_bytes < required_bytes + headroom:
+            raise RuntimeError(
+                "Insufficient training scratch space: need approximately "
+                f"{self._format_byte_count(required_bytes + headroom)}, but "
+                f"{self._format_byte_count(free_bytes)} is free in {cache_base}"
+            )
+
+        cache_root = Path(
+            tempfile.mkdtemp(prefix="support-train-", dir=cache_base)
+        )
+        cache_root.chmod(0o700)
+        metadata = []
+        print(
+            "Caching normalized training data for validation offload: "
+            f"{len(arrays)} stack(s), {self._format_byte_count(required_bytes)} "
+            f"in {cache_root}"
+        )
+        try:
+            for index, array in enumerate(
+                tqdm(arrays, desc="Caching training data to local scratch")
+            ):
+                # Keep large 4D corpora from placing thousands of plane caches
+                # in one directory on the node-local filesystem.
+                stack_directory = cache_root / f"{index // 100:04d}"
+                stack_directory.mkdir(mode=0o700, exist_ok=True)
+                destination = stack_directory / f"stack_{index:06d}.npy"
+                file_descriptor, temporary_name = tempfile.mkstemp(
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                    dir=stack_directory,
+                )
+                temporary_path = Path(temporary_name)
+                try:
+                    with os.fdopen(file_descriptor, "wb") as handle:
+                        file_descriptor = None
+                        np.save(handle, array, allow_pickle=False)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                        self._drop_file_cache(handle)
+                    os.replace(temporary_path, destination)
+                finally:
+                    if file_descriptor is not None:
+                        os.close(file_descriptor)
+                    if temporary_path.exists():
+                        temporary_path.unlink()
+                metadata.append(
+                    {
+                        "path": str(destination),
+                        "shape": tuple(int(size) for size in array.shape),
+                        "dtype": array.dtype.str,
+                        "nbytes": int(array.nbytes),
+                        "file_size": destination.stat().st_size,
+                        "sha256": self._array_sha256(array),
+                    }
+                )
+        except BaseException:
+            shutil.rmtree(cache_root, ignore_errors=True)
+            raise
+
+        self._training_cache_root = str(cache_root)
+        self._training_cache_files = tuple(metadata)
+        self._training_cache_owned = True
+        print("Training scratch cache is complete and will be reused each epoch.")
+        return True
+
+    @staticmethod
+    def _shutdown_dataloader_workers(dataloader):
+        iterator = getattr(dataloader, "_iterator", None)
+        shutdown_workers = getattr(iterator, "_shutdown_workers", None)
+        if callable(shutdown_workers):
+            shutdown_workers()
+
+    def _suspend_training_data_for_validation(self, reload_after_validation):
+        """Release the DataLoader and resident training tensors before validation."""
+        if not self._training_data_offload_enabled():
+            return False
+        if getattr(self, "_suspended_training_dataset", None) is not None:
+            raise RuntimeError("Training data is already suspended")
+
+        dataloader = self.dataloader
+        dataset = dataloader.dataset
+        uses_cache = False
+        if reload_after_validation:
+            uses_cache = self._ensure_training_cache(dataset)
+
+        self._training_dataloader_batch_count = len(dataloader)
+        self._shutdown_dataloader_workers(dataloader)
+        del self.dataloader
+        dataset.precomputed_indices = None
+        self._suspended_training_dataset = dataset
+        self._suspended_patch_rng_state = dataset.patch_rng.bit_generator.state
+        self._suspended_uses_training_cache = uses_cache
+        resident_stack_count = len(dataset.noisy_imgs)
+        dataset.noisy_imgs = []
+        gc.collect()
+        if not reload_after_validation:
+            reload_detail = "no reload is needed after final validation"
+        elif uses_cache:
+            reload_detail = f"reload source: local scratch at {self._training_cache_root}"
+        else:
+            reload_detail = "reload source: the original TIFF files"
+        print(
+            f"Released {resident_stack_count} resident training stack(s) before "
+            f"validation; {reload_detail}."
+        )
+        return True
+
+    def _restore_training_data_after_validation(self):
+        """Restore training tensors and a fresh DataLoader after validation."""
+        dataset = getattr(self, "_suspended_training_dataset", None)
+        if dataset is None:
+            return False
+
+        # Validation has returned, so collect its large temporary arrays before
+        # allocating the resident training corpus again.
+        gc.collect()
+        if getattr(self, "_suspended_uses_training_cache", False):
+            restored_stacks = []
+            for metadata in tqdm(
+                self._training_cache_files,
+                desc="Reloading training data from local scratch",
+            ):
+                with open(metadata["path"], "rb") as handle:
+                    array = np.load(handle, allow_pickle=False)
+                    self._drop_file_cache(handle)
+                if not self._cache_metadata_matches_array(metadata, array):
+                    raise RuntimeError(
+                        "Training scratch cache changed unexpectedly: "
+                        f"{metadata['path']}"
+                    )
+                if self._array_sha256(array) != metadata["sha256"]:
+                    raise RuntimeError(
+                        "Training scratch cache checksum failed: "
+                        f"{metadata['path']}"
+                    )
+                restored_stacks.append(torch.from_numpy(array))
+            dataset.noisy_imgs = restored_stacks
+            dataset.patch_rng.bit_generator.state = self._suspended_patch_rng_state
+            self.dataloader = DataLoader(
+                dataset=dataset,
+                **self._dataloader_kwargs(shuffle=True),
+            )
+        else:
+            # This path is intentionally slower but still prevents validation
+            # from competing with the training corpus for RAM when local
+            # scratch was not configured.
+            patch_rng_state = self._suspended_patch_rng_state
+            self._suspended_training_dataset = None
+            self.generate_dataloader()
+            self.dataloader.dataset.patch_rng.bit_generator.state = patch_rng_state
+
+        restored_stack_count = len(self.dataloader.dataset.noisy_imgs)
+        self._suspended_training_dataset = None
+        self._training_dataloader_batch_count = len(self.dataloader)
+        self._suspended_uses_training_cache = False
+        gc.collect()
+        print(
+            f"Reloaded {restored_stack_count} training stack(s) after validation."
+        )
+        return True
+
+    def _remove_training_cache(self):
+        cache_root = getattr(self, "_training_cache_root", None)
+        if cache_root and getattr(self, "_training_cache_owned", False):
+            shutil.rmtree(cache_root, ignore_errors=True)
+        self._training_cache_root = None
+        self._training_cache_files = ()
+        self._training_cache_owned = False
 
     def initialize_network(self):
         """
@@ -482,17 +876,11 @@ class TrainingClass():
             )
             use_generalization_checkpoint = generalization_checkpoint is not None
             if generalization_checkpoint is not None and epoch_checkpoint is not None:
-                generalized_epoch, generalized_batch = generalization_checkpoint
-                generalized_completed_epoch = (
-                    generalized_epoch
-                    if generalized_batch == len(self.dataloader)
-                    else generalized_epoch - 1
-                )
-                # Prefer an epoch snapshot at equal progress. It represents the
-                # clean boundary before a partially completed next epoch.
-                use_generalization_checkpoint = (
-                    generalized_completed_epoch > epoch_checkpoint
-                )
+                generalized_epoch, _ = generalization_checkpoint
+                # A batch checkpoint in a later epoch contains newer learned
+                # weights than the preceding epoch boundary. At the same epoch,
+                # prefer the permanent epoch snapshot.
+                use_generalization_checkpoint = generalized_epoch > epoch_checkpoint
             if use_generalization_checkpoint:
                 checkpoint_epoch, checkpoint_batch = generalization_checkpoint
                 total_batches = len(self.dataloader)
@@ -612,6 +1000,198 @@ class TrainingClass():
             if temporary_path.exists():
                 temporary_path.unlink()
 
+    def _pending_validation_path(self):
+        return Path(self.pth_dir) / ".pending_validation.json"
+
+    def _write_pending_validation(self, epoch, training_metrics):
+        """Atomically remember validation work paired with a saved epoch."""
+        payload = {
+            "version": 1,
+            "epoch": int(epoch),
+            "training_metrics": {
+                "loss_total": float(training_metrics["loss_total"]),
+                "loss_l1": float(training_metrics["loss_l1"]),
+                "loss_l2": float(training_metrics["loss_l2"]),
+            },
+        }
+        destination = self._pending_validation_path()
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            file = os.fdopen(file_descriptor, "w", encoding="utf-8")
+            file_descriptor = None
+            with file:
+                json.dump(payload, file, sort_keys=True)
+                file.write("\n")
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary_path, destination)
+        finally:
+            if file_descriptor is not None:
+                os.close(file_descriptor)
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    def _read_pending_validation(self):
+        path = self._pending_validation_path()
+        if not path.is_file():
+            return None
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+            if not isinstance(payload, dict):
+                raise ValueError("state must be a JSON object")
+            if payload.get("version") != 1:
+                raise ValueError("unsupported version")
+            epoch = payload["epoch"]
+            if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0:
+                raise ValueError("invalid epoch")
+            raw_metrics = payload["training_metrics"]
+            if not isinstance(raw_metrics, dict):
+                raise ValueError("invalid training metrics")
+            training_metrics = {
+                name: float(raw_metrics[name])
+                for name in ("loss_total", "loss_l1", "loss_l2")
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Invalid pending-validation state in {path}"
+            ) from exc
+        return {
+            "epoch": int(epoch),
+            "training_metrics": training_metrics,
+        }
+
+    def _clear_pending_validation(self, epoch):
+        pending = self._read_pending_validation()
+        if pending is None:
+            return
+        if pending["epoch"] != int(epoch):
+            raise RuntimeError(
+                "Pending-validation epoch changed while validation was running"
+            )
+        self._pending_validation_path().unlink()
+
+    def _record_epoch_completion(
+        self,
+        epoch,
+        training_metrics,
+        validation_metrics,
+    ):
+        if hasattr(self, "log"):
+            try:
+                extra = (
+                    {"validation": validation_metrics}
+                    if validation_metrics is not None
+                    else None
+                )
+                self.log.append_loss(
+                    epoch,
+                    loss_total=training_metrics["loss_total"],
+                    loss_l1=training_metrics["loss_l1"],
+                    loss_l2=training_metrics["loss_l2"],
+                    extra=extra,
+                )
+            except Exception:
+                pass
+        self._run_optional_callback(
+            "epoch_complete_callback",
+            self,
+            epoch,
+            training_metrics,
+            validation_metrics,
+        )
+
+    def _promote_final_batch_checkpoint(self):
+        """Keep a permanent epoch snapshot after a stop at the fourth quartile."""
+        if (
+            not getattr(self, "save_every_epoch", False)
+            or getattr(self, "latest_checkpoint_epoch", None) is None
+            or (
+                getattr(self, "latest_checkpoint_batch", None)
+                != len(self.dataloader)
+            )
+            or self.epoch != self.latest_checkpoint_epoch + 1
+        ):
+            return
+        completed_epoch = self.latest_checkpoint_epoch
+        self.save_checkpoint(completed_epoch)
+        print(
+            f"Promoted epoch {completed_epoch}'s final batch checkpoint to: "
+            f"{self.model_path}"
+        )
+
+    def _resume_pending_validation(self):
+        """Finish validation for the loaded checkpoint without retraining it."""
+        pending = self._read_pending_validation()
+        if pending is None:
+            return
+        if self.epoch_end_callback is None:
+            raise RuntimeError(
+                "A saved checkpoint still requires validation, but no "
+                "epoch_end_callback is configured"
+            )
+
+        pending_epoch = pending["epoch"]
+        loaded_epoch_boundary = (
+            self.latest_checkpoint_epoch == pending_epoch
+            and (
+                self.latest_checkpoint_batch is None
+                or self.latest_checkpoint_batch == len(self.dataloader)
+            )
+        )
+        if not loaded_epoch_boundary and pending_epoch == self.epoch:
+            print(
+                f"Discarding pending validation for epoch {pending_epoch}: "
+                "its complete checkpoint was not saved, so the epoch will be "
+                "retrained."
+            )
+            self._clear_pending_validation(pending_epoch)
+            return
+        if not loaded_epoch_boundary:
+            raise RuntimeError(
+                f"Pending validation for epoch {pending_epoch} does not match "
+                "the loaded checkpoint; refusing to skip required validation"
+            )
+
+        next_epoch = self.epoch
+        self.epoch = pending_epoch
+        training_metrics = pending["training_metrics"]
+        print(
+            f"Resuming validation for saved epoch {pending_epoch} before "
+            f"training epoch {next_epoch}."
+        )
+        self._run_optional_callback(
+            "epoch_start_callback",
+            self,
+            pending_epoch,
+        )
+        reload_after_validation = next_epoch < self.n_epochs
+        self._suspend_training_data_for_validation(reload_after_validation)
+        validation_metrics = self.epoch_end_callback(
+            self,
+            pending_epoch,
+            training_metrics,
+        )
+        self.last_validation_metrics = validation_metrics
+        # The validation callback records its durable CSV state before it
+        # returns. Once it succeeds, a retry is no longer required.
+        self._clear_pending_validation(pending_epoch)
+        self._record_epoch_completion(
+            pending_epoch,
+            training_metrics,
+            validation_metrics,
+        )
+        self.epoch = next_epoch
+        if reload_after_validation:
+            self._restore_training_data_after_validation()
+        else:
+            self._remove_training_cache()
+
     def _remove_intermediary_checkpoints(self, keep_epoch, keep_batch=None):
         checkpoint_pattern = re.compile(r"^(model|optimizer|scaler)_(\d+)\.pth$")
         generalization_pattern = re.compile(
@@ -659,6 +1239,37 @@ class TrainingClass():
             if remove:
                 path.unlink()
 
+    def _remove_batch_checkpoints(self, keep_epoch=None, keep_batch=None):
+        """Remove rolling batch bundles without touching epoch snapshots."""
+        checkpoint_pattern = re.compile(
+            r"^(model|optimizer|scaler)_(\d+)_batch_(\d+)\.pth$"
+        )
+        incomplete_pattern = re.compile(
+            r"^\.checkpoint_(\d+)_batch_(\d+)\.incomplete$"
+        )
+        keep = (
+            (int(keep_epoch), int(keep_batch))
+            if keep_epoch is not None and keep_batch is not None
+            else None
+        )
+        for path in Path(self.pth_dir).iterdir():
+            checkpoint_match = checkpoint_pattern.fullmatch(path.name)
+            incomplete_match = incomplete_pattern.fullmatch(path.name)
+            if checkpoint_match is not None:
+                checkpoint = (
+                    int(checkpoint_match.group(2)),
+                    int(checkpoint_match.group(3)),
+                )
+            elif incomplete_match is not None:
+                checkpoint = (
+                    int(incomplete_match.group(1)),
+                    int(incomplete_match.group(2)),
+                )
+            else:
+                continue
+            if checkpoint != keep:
+                path.unlink()
+
     def save_checkpoint(self, epoch, batch=None, remove_previous=False):
         """Save a complete epoch-level or generalized batch-level state bundle."""
         paths = self._checkpoint_paths(epoch, batch)
@@ -675,7 +1286,18 @@ class TrainingClass():
         self.latest_checkpoint_epoch = epoch
         self.latest_checkpoint_batch = batch
         self.model_path = str(paths["model"])
-        if remove_previous or self.rm_intermediaries:
+        if batch is not None:
+            if remove_previous or self.rm_intermediaries:
+                # Batch checkpoints are one rolling recovery bundle. Keep
+                # permanent epoch snapshots until a newer epoch commits.
+                self._remove_batch_checkpoints(
+                    keep_epoch=epoch,
+                    keep_batch=batch,
+                )
+        else:
+            # The permanent epoch bundle supersedes the rolling batch bundle.
+            self._remove_batch_checkpoints()
+        if batch is None and (remove_previous or self.rm_intermediaries):
             self._remove_intermediary_checkpoints(
                 keep_epoch=epoch, keep_batch=batch
             )
@@ -689,6 +1311,11 @@ class TrainingClass():
             (total_batches * quarter + 3) // 4
             for quarter in range(1, 5)
         }))
+
+    def _scheduled_batch_checkpoint_batches(self, total_batches):
+        if not self.train_gen or not self.checkpoints:
+            return set()
+        return set(self._quarter_checkpoint_batches(total_batches))
         
 
     def train(self):
@@ -718,10 +1345,8 @@ class TrainingClass():
         lh_L1 = []
         lh_L2 = []
         total_batches = len(self.dataloader)
-        checkpoint_batches = (
-            set(self._quarter_checkpoint_batches(total_batches))
-            if self.train_gen and self.checkpoints and not self.save_every_epoch
-            else set()
+        checkpoint_batches = self._scheduled_batch_checkpoint_batches(
+            total_batches
         )
         if (
             self.latest_checkpoint_epoch == self.epoch
@@ -799,10 +1424,27 @@ class TrainingClass():
                         and Path(self.model_path).is_file()
                     )
                     if not is_current_checkpoint:
+                        if (
+                            batch == total_batches
+                            and self.epoch_end_callback is not None
+                        ):
+                            self._write_pending_validation(
+                                self.epoch,
+                                {
+                                    "loss_total": L_mean,
+                                    "loss_l1": L1_mean,
+                                    "loss_l2": L2_mean,
+                                },
+                            )
                         self.save_checkpoint(
                             self.epoch,
                             batch=batch,
                             remove_previous=True,
+                        )
+                        tqdm.write(
+                            "Saved rolling batch checkpoint at epoch "
+                            f"{self.epoch}, batch {batch}/{total_batches}: "
+                            f"{self.model_path}"
                         )
         self.lh_L = lh_L
         self.lh_L1 = lh_L1
@@ -812,6 +1454,8 @@ class TrainingClass():
         """
         
         """
+        self._promote_final_batch_checkpoint()
+        self._resume_pending_validation()
         t_init = time.mktime(time.localtime())
         lh = []
         clear_epochs_interval = 10
@@ -831,23 +1475,26 @@ class TrainingClass():
             L1_mean = np.mean(np.array(self.lh_L1))
             L2_mean = np.mean(np.array(self.lh_L2))
             lh.append(L_mean)
-            plotASCII(lh)
             training_metrics = {
                 "loss_total": float(L_mean),
                 "loss_l1": float(L1_mean),
                 "loss_l2": float(L2_mean),
             }
-            validation_metrics = None
-            if self.epoch_end_callback is not None:
-                # Validate before committing the epoch checkpoint. If validation
-                # is interrupted, resume repeats this epoch instead of skipping
-                # a missing metric/output set.
-                validation_metrics = self.epoch_end_callback(
-                    self,
-                    epoch,
-                    training_metrics,
-                )
-                self.last_validation_metrics = validation_metrics
+            saves_epoch_checkpoint = (
+                self.checkpoints
+                and (not self.train_gen or self.save_every_epoch)
+            ) or (
+                not self.checkpoints
+                and self._checkpoint_controls_configured
+                and epoch == self.n_epochs - 1
+            )
+            if (
+                self.epoch_end_callback is not None
+                and saves_epoch_checkpoint
+            ):
+                # Persist this first so any complete checkpoint is known to
+                # need validation if the process stops before validation ends.
+                self._write_pending_validation(epoch, training_metrics)
             if self.checkpoints:
                 if not self.train_gen or self.save_every_epoch:
                     self.save_checkpoint(epoch)
@@ -863,28 +1510,49 @@ class TrainingClass():
                     legacy_model_path,
                 )
                 self.model_path = str(legacy_model_path)
-            if hasattr(self, "log"):
-                try:
-                    extra = (
-                        {"validation": validation_metrics}
-                        if validation_metrics is not None
-                        else None
-                    )
-                    self.log.append_loss(
-                        epoch,
-                        loss_total=L_mean,
-                        loss_l1=L1_mean,
-                        loss_l2=L2_mean,
-                        extra=extra,
-                    )
-                except Exception:
-                    pass
-            self._run_optional_callback(
-                "epoch_complete_callback",
-                self,
+            has_resumable_epoch_checkpoint = saves_epoch_checkpoint or (
+                self.checkpoints
+                and self.train_gen
+                and not self.save_every_epoch
+                and self.latest_checkpoint_epoch == epoch
+                and self.latest_checkpoint_batch == len(self.dataloader)
+            )
+            if has_resumable_epoch_checkpoint:
+                timing = (
+                    " before validation"
+                    if self.epoch_end_callback is not None
+                    else ""
+                )
+                print(
+                    f"Saved epoch {epoch} checkpoint{timing}: "
+                    f"{getattr(self, 'model_path', None)}"
+                )
+            plotASCII(lh)
+            validation_metrics = None
+            if self.epoch_end_callback is not None:
+                reload_after_validation = epoch + 1 < self.n_epochs
+                self._suspend_training_data_for_validation(
+                    reload_after_validation
+                )
+                validation_metrics = self.epoch_end_callback(
+                    self,
+                    epoch,
+                    training_metrics,
+                )
+                self.last_validation_metrics = validation_metrics
+                if has_resumable_epoch_checkpoint:
+                    self._clear_pending_validation(epoch)
+            self._record_epoch_completion(
                 epoch,
                 training_metrics,
                 validation_metrics,
             )
+            if (
+                self.epoch_end_callback is not None
+                and epoch + 1 < self.n_epochs
+            ):
+                self._restore_training_data_after_validation()
+            elif self.epoch_end_callback is not None:
+                self._remove_training_cache()
             if epoch in clear_epochs:
                 clear_output(wait=True)
