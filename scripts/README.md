@@ -79,7 +79,11 @@ exceeds the default allocation, and leave enough output quota for a temporary
 float32 TIFF alongside any output being replaced. On resubmission, a logical
 job whose completion record, model, and output all verify is skipped; use
 `--rerun-completed` to regenerate it. Increasing `--n-epochs` continues each
-model, while lowering it below an existing checkpoint is refused.
+model, while lowering it below an existing checkpoint is refused. If another
+process currently holds a logical job's training lock, that item is reported in
+the Slurm log and skipped without a Slack failure notification; the batch
+continues with the remaining TIFFs/channels and exits successfully. Merely
+finding an old unlocked lock file does not cause a skip.
 
 ## Generalized training with validation
 

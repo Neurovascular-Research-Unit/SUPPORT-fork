@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import tifffile
 
+from scripts import biowulf_singlefile as singlefile
 from scripts.biowulf_singlefile import (
+    PreparedWorkItem,
+    WorkItem,
+    WorkItemBusyError,
     completed_output_is_current,
     concatenate_ome_chunks,
     discover_work_items,
+    exclusive_item_lock,
     latest_complete_checkpoint_epoch,
+    run_work_item,
     write_completion_record,
 )
 
@@ -407,6 +416,129 @@ class CompletionRecordTests(unittest.TestCase):
                     expected_shape=(1, 2, 3),
                 )
             )
+
+
+class WorkItemLockTests(unittest.TestCase):
+    @staticmethod
+    def _prepared(output_stem: str) -> PreparedWorkItem:
+        return PreparedWorkItem(
+            item=WorkItem(
+                scenario="single_tiff",
+                source_paths=(Path(f"/{output_stem}.tif"),),
+                output_stem=output_stem,
+            ),
+            sources=(),
+            logical_shape=(1, 2, 3),
+            logical_dtype="uint16",
+        )
+
+    def test_only_an_actively_held_lock_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            experiment = Path(temporary_directory) / "experiment"
+
+            with exclusive_item_lock(experiment):
+                with self.assertRaisesRegex(
+                    WorkItemBusyError,
+                    r"another process is training .*job_id=.*hostname=.*pid=",
+                ):
+                    with exclusive_item_lock(experiment):
+                        self.fail("a second process must not acquire an active lock")
+
+            # The persistent sidecar is intentionally retained.  Once its
+            # advisory lock is released, it must not look like active work.
+            self.assertTrue((experiment / singlefile.RUN_LOCK_NAME).is_file())
+            with exclusive_item_lock(experiment):
+                pass
+
+    def test_busy_lock_does_not_send_a_slack_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            notifier = mock.Mock()
+            busy = WorkItemBusyError("another process owns this item")
+
+            with mock.patch.object(
+                singlefile,
+                "exclusive_item_lock",
+                side_effect=busy,
+            ):
+                with self.assertRaises(WorkItemBusyError):
+                    run_work_item(
+                        self._prepared("busy_2DT_Ch2"),
+                        mock.Mock(),
+                        {},
+                        {},
+                        root / "output",
+                        root / "work",
+                        root / "scratch",
+                        notifier,
+                    )
+
+            notifier.notify_failure.assert_not_called()
+            notifier.notify_run_started.assert_not_called()
+
+    def test_main_skips_busy_item_and_runs_the_next_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            input_directory = root / "input"
+            output_directory = root / "output"
+            scratch_directory = root / "scratch"
+            parameters = root / "parameters.json"
+            input_directory.mkdir()
+            parameters.write_text("{}\n", encoding="utf-8")
+            prepared_items = [
+                self._prepared("busy_2DT_Ch2"),
+                self._prepared("runnable_2DT_Ch3"),
+            ]
+            runnable_output = output_directory / "runnable_2DT_Ch3_SPRT.tif"
+
+            with (
+                mock.patch.object(
+                    singlefile,
+                    "build_effective_parameters",
+                    return_value=({"patch_size": (1, 2, 3)}, {}),
+                ),
+                mock.patch.object(
+                    singlefile,
+                    "discover_work_items",
+                    return_value=[prepared.item for prepared in prepared_items],
+                ),
+                mock.patch.object(
+                    singlefile,
+                    "prepare_work_items",
+                    return_value=prepared_items,
+                ),
+                mock.patch.object(singlefile, "print_plan"),
+                mock.patch.object(
+                    singlefile,
+                    "run_work_item",
+                    side_effect=[
+                        WorkItemBusyError("owned by another Slurm job"),
+                        runnable_output,
+                    ],
+                ) as mocked_run,
+                contextlib.redirect_stdout(io.StringIO()) as stdout,
+            ):
+                result = singlefile.main(
+                    [
+                        "--input-directory",
+                        str(input_directory),
+                        "--output-directory",
+                        str(output_directory),
+                        "--scratch-directory",
+                        str(scratch_directory),
+                        "--parameters",
+                        str(parameters),
+                        "--use-cpu",
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(mocked_run.call_count, 2)
+            output = stdout.getvalue()
+            self.assertIn("Skipping busy logical job busy_2DT_Ch2", output)
+            self.assertIn("1 logical job(s) completed or already verified", output)
+            self.assertIn("1 skipped because another process", output)
+            self.assertIn(str(runnable_output), output)
 
 
 if __name__ == "__main__":

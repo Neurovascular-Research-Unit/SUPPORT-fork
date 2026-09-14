@@ -75,6 +75,10 @@ class SingleFileConfigurationError(ValueError):
     """Raised when discovery or a saved run is unsafe or ambiguous."""
 
 
+class WorkItemBusyError(RuntimeError):
+    """Raised when another process currently owns a logical job's run lock."""
+
+
 @dataclass(frozen=True)
 class OmeChunkName:
     acquisition: str
@@ -1114,7 +1118,7 @@ def exclusive_item_lock(experiment_directory: Path) -> Iterator[Path]:
         except BlockingIOError as exc:
             handle.seek(0)
             owner = handle.read().strip() or "owner details unavailable"
-            raise SingleFileConfigurationError(
+            raise WorkItemBusyError(
                 f"another process is training {experiment_directory}: {owner}"
             ) from exc
         handle.seek(0)
@@ -1283,9 +1287,6 @@ def run_work_item(
     scratch_directory: Path,
     slack_notifier: Any,
 ) -> Path:
-    from utils.test_collection import TestingClass
-    from utils.train_collection import TrainingClass
-
     item = prepared.item
     output_path = output_directory / f"{item.output_stem}_SPRT.tif"
     experiment_directory = work_directory / item.output_stem
@@ -1331,6 +1332,9 @@ def run_work_item(
                 )
                 return output_path
             with staged_input(prepared, scratch_directory) as input_path:
+                from utils.test_collection import TestingClass
+                from utils.train_collection import TrainingClass
+
                 training_parameters = build_training_parameters(
                     training_base,
                     args,
@@ -1404,6 +1408,11 @@ def run_work_item(
                 slack_notifier.notify_run_completed(trainer)
                 print(f"Completed {item.output_stem}: {output_path}", flush=True)
                 return output_path
+    except WorkItemBusyError:
+        # Lock contention is expected when overlapping Slurm submissions scan
+        # the same input tree.  The caller skips this item, so it must not be
+        # reported to Slack as a training failure.
+        raise
     except BaseException as exc:
         slack_notifier.notify_failure(
             exc,
@@ -1716,17 +1725,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Set allocator and plotting options before importing torch via the model classes.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.environ.setdefault("MPLBACKEND", "Agg")
-    import torch
+    if not args.use_cpu:
+        import torch
 
-    if not args.use_cpu and not torch.cuda.is_available():
-        exc = SingleFileConfigurationError(
-            "no CUDA GPU is visible; request a GPU or pass --use-cpu"
-        )
-        preflight_notifier.notify_failure(exc, stage="GPU preflight")
-        print(str(exc), file=sys.stderr)
-        return 2
+        if not torch.cuda.is_available():
+            exc = SingleFileConfigurationError(
+                "no CUDA GPU is visible; request a GPU or pass --use-cpu"
+            )
+            preflight_notifier.notify_failure(exc, stage="GPU preflight")
+            print(str(exc), file=sys.stderr)
+            return 2
 
     completed: List[Path] = []
+    skipped_busy: List[str] = []
     for number, prepared in enumerate(prepared_items, start=1):
         print(
             f"\n=== Logical job {number}/{len(prepared_items)}: "
@@ -1749,6 +1760,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     notifier,
                 )
             )
+        except WorkItemBusyError as exc:
+            skipped_busy.append(prepared.item.output_stem)
+            print(
+                f"Skipping busy logical job {prepared.item.output_stem}: {exc}",
+                flush=True,
+            )
+            continue
         except SlackConfigurationError as exc:
             print(f"Slack configuration changed during the batch: {exc}", file=sys.stderr)
             return 2
@@ -1756,9 +1774,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"Single-file run failed: {exc}", file=sys.stderr)
             return 2
 
-    print(f"All {len(completed)} logical jobs completed successfully.")
+    print(
+        "Batch finished successfully: "
+        f"{len(completed)} logical job(s) completed or already verified; "
+        f"{len(skipped_busy)} skipped because another process is actively training them."
+    )
     for path in completed:
         print(path)
+    if skipped_busy:
+        print("Busy logical jobs skipped by this process:")
+        for output_stem in skipped_busy:
+            print(output_stem)
     return 0
 
 
