@@ -7,21 +7,79 @@ resources by default:
 1 A100 GPU, 16 CPUs, 240 GB memory, 24 hours
 ```
 
-The training job additionally requests 200 GB of job-local `/lscratch` for an
-ephemeral normalized-training-data cache. This cache lets the trainer release
-the in-memory training corpus during validation and reload it afterward without
-rereading shared storage. It is recreated for every job and automatically
-deleted when that job exits; checkpoints, logs, CSVs, outputs, and source TIFFs
-remain on shared `/data`. With `--no-load-to-memory`, the trainer attempts to
-memory-map the TIFFs and skips this normalized-tensor cache; TIFF layouts that
-cannot be memory-mapped may still require an in-memory fallback.
+The generalized and per-file training jobs additionally request 200 GB of
+job-local `/lscratch`. Generalized training uses it for an ephemeral normalized
+training-data cache; per-file training uses it to concatenate split OME-TIFFs
+into one logical channel stack. Scratch data are recreated for every job and
+automatically deleted when that job exits; checkpoints, logs, CSVs, outputs,
+and source TIFFs remain on shared `/data`. With `--no-load-to-memory`, the
+generalized trainer attempts to memory-map TIFFs and skips its normalized-tensor
+cache; TIFF layouts that cannot be memory-mapped may still require an in-memory
+fallback.
 
 Slurm resource overrides belong before the script path; SUPPORT runner options
-belong after it. Both jobs expect the repository in `SLURM_SUBMIT_DIR` (normally
-submit from `/data/$USER/SUPPORT`), the conda initialization script at
+belong after it. All three batch entrypoints expect the repository in
+`SLURM_SUBMIT_DIR` (normally submit from `/data/$USER/SUPPORT`), the conda
+initialization script at
 `/data/$USER/conda/etc/profile.d/conda.sh`, and an environment named `SUPPORT`.
 Set `SUPPORT_REPO_DIR`, `SUPPORT_CONDA_SH`, or `SUPPORT_CONDA_ENV` through
 `sbatch --export` when those defaults differ.
+
+## Per-file and per-channel 2DT training
+
+`biowulf_singlefile.sbatch` recursively finds TIFFs whose full path contains
+`2DT` (case-insensitive), then trains and tests a separate, non-generalized
+model for each logical input. It reads normal-mode settings from
+`notebooks/parameters.json` and supports two strict layouts:
+
+- A directory containing exactly two ordinary `.tif` files. Each file gets its
+  own model and the legacy `<input-stem>_SPRT.tif` output name.
+- Prairie View acquisitions named like
+  `..._Cycle00001_Ch2_000001.ome.tif`. Chunks are sorted numerically by Cycle
+  and trailing index, concatenated as one temporal stack in `/lscratch`, and
+  trained/tested independently per channel. A `References` subtree is ignored.
+
+For split OME acquisitions, the flat output stem contains the source-relative
+parent path, normalized acquisition name, and channel. Given a `data_noisy`
+root, files under
+`C57_293_ChronicCrani/2026_0805_BaselineImaging1/FOV2_250Deep_3X_2D` with the
+acquisition prefix `FOV2_250Deep_3X_2DT-001` produce:
+
+```text
+C57_293_ChronicCrani_2026_0805_BaselineImaging1_FOV2_250Deep_3X_2D_FOV2_250Deep_3X_2DT_Ch2_SPRT.tif
+C57_293_ChronicCrani_2026_0805_BaselineImaging1_FOV2_250Deep_3X_2D_FOV2_250Deep_3X_2DT_Ch3_SPRT.tif
+```
+
+Preview all grouping, temporal order, shapes, and destinations on a login node:
+
+```bash
+python scripts/biowulf_singlefile.py \
+  --input-directory /data/$USER/data_noisy \
+  --output-directory /data/$USER/data_clean \
+  --dry-run
+```
+
+Then submit the same inputs through Slurm:
+
+```bash
+sbatch scripts/biowulf_singlefile.sbatch \
+  --input-directory /data/$USER/data_noisy \
+  --output-directory /data/$USER/data_clean \
+  --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
+```
+
+OME concatenation uses private job-local scratch; the final TIFF still uses
+SUPPORT's existing atomic float32 ImageJ `TYX` writer. Persistent checkpoints
+and logs live under
+`OUTPUT_DIRECTORY/.support_singlefile_models/<output-stem>/`, allowing a
+resubmitted command to resume at the latest completed epoch. A saved manifest
+prevents a checkpoint from being silently reused with changed inputs or model
+settings. Increase the `lscratch` request if the dry-run's logical input size
+exceeds the default allocation, and leave enough output quota for a temporary
+float32 TIFF alongside any output being replaced. On resubmission, a logical
+job whose completion record, model, and output all verify is skipped; use
+`--rerun-completed` to regenerate it. Increasing `--n-epochs` continues each
+model, while lowering it below an existing checkpoint is refused.
 
 ## Generalized training with validation
 
