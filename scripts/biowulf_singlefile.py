@@ -79,6 +79,10 @@ class WorkItemBusyError(RuntimeError):
     """Raised when another process currently owns a logical job's run lock."""
 
 
+class SavedRunMismatchError(SingleFileConfigurationError):
+    """Raised when saved checkpoints are incompatible with the current job."""
+
+
 @dataclass(frozen=True)
 class OmeChunkName:
     acquisition: str
@@ -881,6 +885,88 @@ def _configuration_signature(
     }
 
 
+_VOLATILE_SOURCE_KEYS = frozenset({"device"})
+_RUNTIME_TRAINING_KEYS = frozenset({"pin_memory", "prefetch_factor"})
+_RUNTIME_TESTING_KEYS = frozenset(
+    {"batch_size", "pin_memory", "prefetch_factor"}
+)
+
+
+def _mapping_without_keys(value: Any, ignored: frozenset[str]) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    return {
+        str(key): _json_value(item)
+        for key, item in sorted(value.items())
+        if str(key) not in ignored
+    }
+
+
+def _stable_sources(value: Any) -> Any:
+    if not isinstance(value, (list, tuple)):
+        return value
+    return [
+        _mapping_without_keys(source, _VOLATILE_SOURCE_KEYS)
+        for source in value
+    ]
+
+
+def _checkpoint_identity(signature: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return only fields that must match before checkpoint weights are reused."""
+    normalized = dict(_json_value(signature))
+    # Inference settings do not affect whether training weights can resume.
+    # All other top-level fields, including unknown future fields and the
+    # schema version, remain fail-closed checkpoint identity.
+    normalized.pop("testing", None)
+    # st_dev can vary across mounts or compute nodes even when the same shared
+    # file is addressed.  Inode/size/mtime/shape/dtype/path remain persistent
+    # guards; live identity is rechecked again before training.
+    normalized["sources"] = _stable_sources(normalized.get("sources"))
+    # Pinning and prefetching affect throughput rather than model/checkpoint
+    # compatibility.  load_to_memory stays in the identity because its
+    # normalization path can affect training numerics.
+    normalized["training"] = _mapping_without_keys(
+        normalized.get("training"), _RUNTIME_TRAINING_KEYS
+    )
+    return normalized
+
+
+def _completion_identity(signature: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return stable fields that determine whether a published output is reusable."""
+    normalized = dict(_json_value(signature))
+    normalized["sources"] = _stable_sources(normalized.get("sources"))
+    normalized["training"] = _mapping_without_keys(
+        normalized.get("training"), _RUNTIME_TRAINING_KEYS
+    )
+    normalized["testing"] = _mapping_without_keys(
+        normalized.get("testing"), _RUNTIME_TESTING_KEYS
+    )
+    return normalized
+
+
+def _differing_paths(first: Any, second: Any, prefix: str = "") -> List[str]:
+    """Return concise JSON-style paths whose values differ."""
+    if isinstance(first, Mapping) and isinstance(second, Mapping):
+        differences: List[str] = []
+        for key in sorted(set(first) | set(second), key=str):
+            child = f"{prefix}.{key}" if prefix else str(key)
+            if key not in first or key not in second:
+                differences.append(child)
+            else:
+                differences.extend(_differing_paths(first[key], second[key], child))
+        return differences
+    if isinstance(first, (list, tuple)) and isinstance(second, (list, tuple)):
+        differences = []
+        if len(first) != len(second):
+            differences.append(f"{prefix}.length" if prefix else "length")
+        for index, (left, right) in enumerate(zip(first, second)):
+            differences.extend(
+                _differing_paths(left, right, f"{prefix}[{index}]")
+            )
+        return differences
+    return [] if first == second else [prefix or "<root>"]
+
+
 def _atomic_write_json(path: Path, document: Mapping[str, Any]) -> None:
     file_descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -900,11 +986,51 @@ def _atomic_write_json(path: Path, document: Mapping[str, Any]) -> None:
 
 def _configuration_sha256(signature: Mapping[str, Any]) -> str:
     encoded = json.dumps(
+        _completion_identity(signature),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _legacy_configuration_sha256(signature: Mapping[str, Any]) -> str:
+    """Hash signatures exactly as completion-record version 1 originally did."""
+    encoded = json.dumps(
         _json_value(signature),
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _completion_configuration_matches(
+    experiment_directory: Path,
+    signature: Mapping[str, Any],
+    recorded_hash: Any,
+) -> bool:
+    """Accept stable hashes plus provably equivalent legacy v1 hashes."""
+    if recorded_hash in {
+        _configuration_sha256(signature),
+        _legacy_configuration_sha256(signature),
+    }:
+        return True
+
+    # A deployed v1 record may hash the older manifest containing a different
+    # prefetch count or mount device.  Accept it only when that saved manifest
+    # has the same stable output identity as the current job.
+    manifest_path = experiment_directory / RUN_MANIFEST_NAME
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        return False
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            saved_signature = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(saved_signature, dict)
+        and _completion_identity(saved_signature) == _completion_identity(signature)
+        and recorded_hash == _legacy_configuration_sha256(saved_signature)
+    )
 
 
 def validate_or_create_manifest(
@@ -924,17 +1050,34 @@ def validate_or_create_manifest(
             raise SingleFileConfigurationError(
                 f"could not read saved run manifest {manifest_path}: {exc}"
             ) from exc
-        if existing != expected:
+        if not isinstance(existing, dict):
             raise SingleFileConfigurationError(
-                "saved checkpoint configuration or source identity does not match "
-                f"the current job: {manifest_path}; use a new work directory or "
-                "restore the original inputs/settings"
+                f"saved run manifest must contain a JSON object: {manifest_path}"
             )
         if not resume and any((experiment_directory / "pth").glob("model*.pth")):
             raise SingleFileConfigurationError(
                 f"--no-resume cannot reuse existing checkpoints in {experiment_directory}"
             )
-        return "matching saved run"
+        if existing != expected:
+            existing_identity = _checkpoint_identity(existing)
+            expected_identity = _checkpoint_identity(expected)
+            if existing_identity == expected_identity:
+                # Preserve the original manifest for auditability and for
+                # validating legacy completion-record hashes.
+                manifest_state = "compatible saved run; runtime differences accepted"
+            else:
+                differences = _differing_paths(existing_identity, expected_identity)
+                shown = differences[:12]
+                difference_text = ", ".join(shown) or "unknown fields"
+                if len(differences) > len(shown):
+                    difference_text += f", and {len(differences) - len(shown)} more"
+                raise SavedRunMismatchError(
+                    "saved checkpoint identity does not match the current job "
+                    f"({difference_text}): {manifest_path}"
+                )
+        else:
+            manifest_state = "matching saved run"
+        return manifest_state
 
     meaningful = [
         path
@@ -1034,8 +1177,11 @@ def completed_output_is_current(
             return False
         if (
             record.get("version") != 1
-            or record.get("configuration_sha256")
-            != _configuration_sha256(signature)
+            or not _completion_configuration_matches(
+                experiment_directory,
+                signature,
+                record.get("configuration_sha256"),
+            )
             or int(record.get("completed_epochs", -1)) != int(requested_epochs)
         ):
             return False
@@ -1047,7 +1193,6 @@ def completed_output_is_current(
         if (
             output_stat.st_size != int(output_record["size"])
             or output_stat.st_mtime_ns != int(output_record["mtime_ns"])
-            or output_stat.st_dev != int(output_record["device"])
             or output_stat.st_ino != int(output_record["inode"])
         ):
             return False
@@ -1084,7 +1229,6 @@ def completed_output_is_current(
         if (
             model_stat.st_size != int(model_record["size"])
             or model_stat.st_mtime_ns != int(model_record["mtime_ns"])
-            or model_stat.st_dev != int(model_record["device"])
             or model_stat.st_ino != int(model_record["inode"])
         ):
             return False
@@ -1293,6 +1437,10 @@ def run_work_item(
     trainer = None
     try:
         with exclusive_item_lock(experiment_directory):
+            # Do this before creating a new manifest.  Otherwise a source that
+            # changed after batch preflight could strand a stale manifest and
+            # turn every later submission into a persistent mismatch skip.
+            verify_sources_unchanged(prepared)
             signature = _configuration_signature(
                 prepared,
                 args.dimensionality,
@@ -1303,7 +1451,6 @@ def run_work_item(
                 experiment_directory, signature, bool(args.resume)
             )
             print(f"Run manifest: {manifest_state} ({experiment_directory / RUN_MANIFEST_NAME})")
-            verify_sources_unchanged(prepared)
             requested_epochs = int(training_base["n_epochs"])
             latest_epoch = latest_complete_checkpoint_epoch(
                 experiment_directory,
@@ -1408,9 +1555,9 @@ def run_work_item(
                 slack_notifier.notify_run_completed(trainer)
                 print(f"Completed {item.output_stem}: {output_path}", flush=True)
                 return output_path
-    except WorkItemBusyError:
-        # Lock contention is expected when overlapping Slurm submissions scan
-        # the same input tree.  The caller skips this item, so it must not be
+    except (WorkItemBusyError, SavedRunMismatchError):
+        # Lock contention and an incompatible saved run are safe per-item
+        # skips.  The caller reports them and continues, so neither should be
         # reported to Slack as a training failure.
         raise
     except BaseException as exc:
@@ -1738,6 +1885,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     completed: List[Path] = []
     skipped_busy: List[str] = []
+    skipped_incompatible: List[str] = []
     for number, prepared in enumerate(prepared_items, start=1):
         print(
             f"\n=== Logical job {number}/{len(prepared_items)}: "
@@ -1767,6 +1915,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 flush=True,
             )
             continue
+        except SavedRunMismatchError as exc:
+            skipped_incompatible.append(prepared.item.output_stem)
+            print(
+                "Skipping logical job with incompatible saved checkpoints "
+                f"{prepared.item.output_stem}: {exc}",
+                flush=True,
+            )
+            continue
         except SlackConfigurationError as exc:
             print(f"Slack configuration changed during the batch: {exc}", file=sys.stderr)
             return 2
@@ -1777,13 +1933,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(
         "Batch finished successfully: "
         f"{len(completed)} logical job(s) completed or already verified; "
-        f"{len(skipped_busy)} skipped because another process is actively training them."
+        f"{len(skipped_busy)} skipped because another process is actively training them; "
+        f"{len(skipped_incompatible)} skipped because saved checkpoints are incompatible."
     )
     for path in completed:
         print(path)
     if skipped_busy:
         print("Busy logical jobs skipped by this process:")
         for output_stem in skipped_busy:
+            print(output_stem)
+    if skipped_incompatible:
+        print("Logical jobs skipped due to incompatible saved checkpoints:")
+        for output_stem in skipped_incompatible:
             print(output_stem)
     return 0
 

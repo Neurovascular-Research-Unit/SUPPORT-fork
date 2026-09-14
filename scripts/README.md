@@ -85,6 +85,17 @@ the Slurm log and skipped without a Slack failure notification; the batch
 continues with the remaining TIFFs/channels and exits successfully. Merely
 finding an old unlocked lock file does not cause a skip.
 
+The saved-run compatibility check ignores machine/runtime-only differences such
+as filesystem mount-device values, memory pinning, and data prefetch counts.
+Changing these does not invalidate a checkpoint. Model architecture, training
+semantics (including the data-loading/normalization path), source
+paths/shapes/dtypes/sizes/modification times/inodes, and temporal ordering must
+still match. A logical job with genuinely incompatible saved checkpoints is
+preserved and skipped without a Slack failure notification, and the batch
+continues. The Slurm log lists the mismatched identity fields. To retrain it
+intentionally, first ensure no job is using its output, then select a new work
+and output directory or archive the old experiment state manually.
+
 ## Generalized training with validation
 
 `biowulf_train.sbatch` is the non-notebook equivalent of

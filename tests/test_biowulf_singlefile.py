@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import contextlib
 import io
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +18,8 @@ import tifffile
 from scripts import biowulf_singlefile as singlefile
 from scripts.biowulf_singlefile import (
     PreparedWorkItem,
+    SavedRunMismatchError,
+    SingleFileConfigurationError,
     WorkItem,
     WorkItemBusyError,
     completed_output_is_current,
@@ -22,7 +27,9 @@ from scripts.biowulf_singlefile import (
     discover_work_items,
     exclusive_item_lock,
     latest_complete_checkpoint_epoch,
+    prepare_work_items,
     run_work_item,
+    validate_or_create_manifest,
     write_completion_record,
 )
 
@@ -418,6 +425,236 @@ class CompletionRecordTests(unittest.TestCase):
             )
 
 
+class ManifestCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def _signature() -> dict:
+        return {
+            "version": 1,
+            "scenario": "ome_chunks",
+            "output_stem": "animal_session_2DT_Ch3",
+            "channel": 3,
+            "acquisition": "session_2DT",
+            "temporal_keys": [[1, 1], [1, 2]],
+            "dimensionality": "2+1D",
+            "logical_shape": [10, 32, 32],
+            "logical_dtype": "uint16",
+            "sources": [
+                {
+                    "path": "/shared/session_2DT_Ch3_000001.ome.tif",
+                    "shape": [5, 32, 32],
+                    "dtype": "uint16",
+                    "size": 10240,
+                    "mtime_ns": 123456789,
+                    "device": 10,
+                    "inode": 20,
+                }
+            ],
+            "training": {
+                "patch_size": [16, 64, 64],
+                "patch_interval": [8, 32, 32],
+                "batch_size": 4,
+                "load_to_memory": False,
+                "pin_memory": True,
+                "prefetch_factor": 8,
+                "lr": 0.0001,
+                "use_amp": True,
+                "depth": 5,
+            },
+            "testing": {
+                "patch_interval": [8, 32, 32],
+                "batch_size": 4,
+                "pin_memory": True,
+                "prefetch_factor": 8,
+                "pad": True,
+            },
+        }
+
+    def test_runtime_and_compute_node_differences_refresh_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            experiment = Path(temporary_directory) / "experiment"
+            experiment.mkdir()
+            original = self._signature()
+            self.assertEqual(
+                validate_or_create_manifest(experiment, original, resume=True),
+                "new run",
+            )
+            checkpoint = experiment / "pth" / "sentinel.pth"
+            checkpoint.parent.mkdir()
+            checkpoint.write_bytes(b"preserve me")
+
+            current = copy.deepcopy(original)
+            current["sources"][0]["device"] = 999
+            current["training"]["pin_memory"] = False
+            current["training"]["prefetch_factor"] = 4
+            current["testing"]["batch_size"] = 1
+            current["testing"]["pin_memory"] = False
+            current["testing"]["prefetch_factor"] = 4
+
+            state = validate_or_create_manifest(experiment, current, resume=True)
+
+            self.assertIn("runtime differences accepted", state)
+            with (experiment / singlefile.RUN_MANIFEST_NAME).open(
+                "r", encoding="utf-8"
+            ) as handle:
+                self.assertEqual(json.load(handle), original)
+            self.assertEqual(checkpoint.read_bytes(), b"preserve me")
+
+    def test_semantic_mismatch_is_typed_and_preserves_saved_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            experiment = Path(temporary_directory) / "experiment"
+            experiment.mkdir()
+            original = self._signature()
+            validate_or_create_manifest(experiment, original, resume=True)
+            manifest = experiment / singlefile.RUN_MANIFEST_NAME
+            checkpoint = experiment / "pth" / "sentinel.pth"
+            checkpoint.parent.mkdir()
+            checkpoint.write_bytes(b"preserve me")
+            original_manifest = manifest.read_bytes()
+            changed = copy.deepcopy(original)
+            changed["training"]["lr"] = 0.001
+
+            with self.assertRaisesRegex(SavedRunMismatchError, r"training\.lr"):
+                validate_or_create_manifest(experiment, changed, resume=True)
+
+            self.assertEqual(manifest.read_bytes(), original_manifest)
+            self.assertEqual(checkpoint.read_bytes(), b"preserve me")
+
+    def test_unknown_or_versioned_identity_changes_fail_closed(self) -> None:
+        for label, mutate in (
+            ("schema version", lambda value: value.__setitem__("version", 2)),
+            (
+                "source inode",
+                lambda value: value["sources"][0].__setitem__("inode", 999),
+            ),
+            (
+                "normalization path",
+                lambda value: value["training"].__setitem__(
+                    "load_to_memory", True
+                ),
+            ),
+            (
+                "unknown top-level identity",
+                lambda value: value.__setitem__("future_semantic_field", "changed"),
+            ),
+        ):
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    experiment = Path(temporary_directory) / "experiment"
+                    experiment.mkdir()
+                    original = self._signature()
+                    validate_or_create_manifest(experiment, original, resume=True)
+                    manifest = experiment / singlefile.RUN_MANIFEST_NAME
+                    original_manifest = manifest.read_bytes()
+                    changed = copy.deepcopy(original)
+                    mutate(changed)
+
+                    with self.assertRaises(SavedRunMismatchError):
+                        validate_or_create_manifest(experiment, changed, resume=True)
+
+                    self.assertEqual(manifest.read_bytes(), original_manifest)
+
+    def test_completion_identity_ignores_runtime_and_mount_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            experiment = root / "experiment"
+            checkpoint_directory = experiment / "pth"
+            checkpoint_directory.mkdir(parents=True)
+            model = checkpoint_directory / "model_0.pth"
+            optimizer = checkpoint_directory / "optimizer_0.pth"
+            model.write_bytes(b"model")
+            optimizer.write_bytes(b"optimizer")
+            output = root / "output.tif"
+            data = np.zeros((10, 32, 32), dtype=np.float32)
+            tifffile.imwrite(output, data, imagej=True, metadata={"axes": "TYX"})
+            original = self._signature()
+            write_completion_record(experiment, original, 1, model, output)
+            current = copy.deepcopy(original)
+            current["sources"][0]["device"] = 500
+            current["training"]["prefetch_factor"] = 4
+            current["testing"]["prefetch_factor"] = 4
+
+            self.assertTrue(
+                completed_output_is_current(
+                    experiment,
+                    current,
+                    requested_epochs=1,
+                    output_path=output,
+                    expected_shape=data.shape,
+                    use_amp=False,
+                )
+            )
+
+            # Completion records also persist st_dev for diagnostics, but a
+            # different mount device on another node must not force inference.
+            record_path = experiment / singlefile.COMPLETION_RECORD_NAME
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["model"]["device"] = 700
+            record["output"]["device"] = 800
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            self.assertTrue(
+                completed_output_is_current(
+                    experiment,
+                    current,
+                    requested_epochs=1,
+                    output_path=output,
+                    expected_shape=data.shape,
+                    use_amp=False,
+                )
+            )
+
+    def test_legacy_completion_hash_is_reused_for_equivalent_runtime_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            experiment = root / "experiment"
+            experiment.mkdir()
+            original = self._signature()
+            validate_or_create_manifest(experiment, original, resume=True)
+            checkpoint_directory = experiment / "pth"
+            checkpoint_directory.mkdir()
+            model = checkpoint_directory / "model_0.pth"
+            optimizer = checkpoint_directory / "optimizer_0.pth"
+            model.write_bytes(b"model")
+            optimizer.write_bytes(b"optimizer")
+            output = root / "output.tif"
+            data = np.zeros((10, 32, 32), dtype=np.float32)
+            tifffile.imwrite(output, data, imagej=True, metadata={"axes": "TYX"})
+            write_completion_record(experiment, original, 1, model, output)
+            record_path = experiment / singlefile.COMPLETION_RECORD_NAME
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["configuration_sha256"] = singlefile._legacy_configuration_sha256(
+                original
+            )
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            current = copy.deepcopy(original)
+            current["sources"][0]["device"] = 900
+            current["training"]["prefetch_factor"] = 4
+            current["testing"]["prefetch_factor"] = 4
+
+            self.assertTrue(
+                completed_output_is_current(
+                    experiment,
+                    current,
+                    requested_epochs=1,
+                    output_path=output,
+                    expected_shape=data.shape,
+                    use_amp=False,
+                )
+            )
+
+            # Output-affecting inference settings still invalidate reuse.
+            current["testing"]["pad"] = False
+            self.assertFalse(
+                completed_output_is_current(
+                    experiment,
+                    current,
+                    requested_epochs=1,
+                    output_path=output,
+                    expected_shape=data.shape,
+                    use_amp=False,
+                )
+            )
+
+
 class WorkItemLockTests(unittest.TestCase):
     @staticmethod
     def _prepared(output_stem: str) -> PreparedWorkItem:
@@ -450,31 +687,83 @@ class WorkItemLockTests(unittest.TestCase):
             with exclusive_item_lock(experiment):
                 pass
 
-    def test_busy_lock_does_not_send_a_slack_failure(self) -> None:
+    def test_skippable_item_states_do_not_send_a_slack_failure(self) -> None:
+        for patched_name, error in (
+            (
+                "exclusive_item_lock",
+                WorkItemBusyError("another process owns this item"),
+            ),
+            (
+                "validate_or_create_manifest",
+                SavedRunMismatchError("saved state is incompatible"),
+            ),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    notifier = mock.Mock()
+                    with mock.patch.object(
+                        singlefile,
+                        patched_name,
+                        side_effect=error,
+                    ):
+                        with self.assertRaises(type(error)):
+                            run_work_item(
+                                self._prepared("busy_2DT_Ch2"),
+                                mock.Mock(),
+                                {},
+                                {},
+                                root / "output",
+                                root / "work",
+                                root / "scratch",
+                                notifier,
+                            )
+
+                    notifier.notify_failure.assert_not_called()
+                    notifier.notify_run_started.assert_not_called()
+
+    def test_source_change_before_item_turn_does_not_create_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
+            source = root / "input" / "scan_2DT.tif"
+            source.parent.mkdir()
+            tifffile.imwrite(
+                source,
+                np.zeros((3, 4, 5), dtype=np.uint16),
+                metadata={"axes": "TYX"},
+            )
+            item = WorkItem(
+                scenario="single_tiff",
+                source_paths=(source,),
+                output_stem="scan_2DT",
+            )
+            prepared = prepare_work_items([item], "2+1D", (1, 1, 1))[0]
+            source_stat = source.stat()
+            os.utime(
+                source,
+                ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns + 1_000_000),
+            )
+            work_directory = root / "work"
             notifier = mock.Mock()
-            busy = WorkItemBusyError("another process owns this item")
 
-            with mock.patch.object(
-                singlefile,
-                "exclusive_item_lock",
-                side_effect=busy,
+            with self.assertRaisesRegex(
+                SingleFileConfigurationError, "input TIFF changed after preflight"
             ):
-                with self.assertRaises(WorkItemBusyError):
-                    run_work_item(
-                        self._prepared("busy_2DT_Ch2"),
-                        mock.Mock(),
-                        {},
-                        {},
-                        root / "output",
-                        root / "work",
-                        root / "scratch",
-                        notifier,
-                    )
+                run_work_item(
+                    prepared,
+                    mock.Mock(dimensionality="2+1D", resume=True),
+                    {},
+                    {},
+                    root / "output",
+                    work_directory,
+                    root / "scratch",
+                    notifier,
+                )
 
-            notifier.notify_failure.assert_not_called()
-            notifier.notify_run_started.assert_not_called()
+            self.assertFalse(
+                (work_directory / item.output_stem / singlefile.RUN_MANIFEST_NAME).exists()
+            )
+            notifier.notify_failure.assert_called_once()
 
     def test_main_skips_busy_item_and_runs_the_next_item(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -487,6 +776,7 @@ class WorkItemLockTests(unittest.TestCase):
             parameters.write_text("{}\n", encoding="utf-8")
             prepared_items = [
                 self._prepared("busy_2DT_Ch2"),
+                self._prepared("incompatible_2DT_Ch3"),
                 self._prepared("runnable_2DT_Ch3"),
             ]
             runnable_output = output_directory / "runnable_2DT_Ch3_SPRT.tif"
@@ -513,6 +803,7 @@ class WorkItemLockTests(unittest.TestCase):
                     "run_work_item",
                     side_effect=[
                         WorkItemBusyError("owned by another Slurm job"),
+                        SavedRunMismatchError("training.lr differs"),
                         runnable_output,
                     ],
                 ) as mocked_run,
@@ -533,11 +824,17 @@ class WorkItemLockTests(unittest.TestCase):
                 )
 
             self.assertEqual(result, 0)
-            self.assertEqual(mocked_run.call_count, 2)
+            self.assertEqual(mocked_run.call_count, 3)
             output = stdout.getvalue()
             self.assertIn("Skipping busy logical job busy_2DT_Ch2", output)
+            self.assertIn(
+                "Skipping logical job with incompatible saved checkpoints "
+                "incompatible_2DT_Ch3",
+                output,
+            )
             self.assertIn("1 logical job(s) completed or already verified", output)
             self.assertIn("1 skipped because another process", output)
+            self.assertIn("1 skipped because saved checkpoints", output)
             self.assertIn(str(runnable_output), output)
 
 
