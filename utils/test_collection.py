@@ -2,6 +2,7 @@ import os
 import shutil
 import stat
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -13,6 +14,59 @@ from utils.log_methods import LogManager
 from utils.dataset import DatasetSUPPORT_test_stitch
 from torch.utils.data import DataLoader
 from support.SUPPORT import SUPPORT
+
+
+def _copy_axis0_chunk(source, destination, start, stop):
+    """Copy one non-overlapping axis-0 chunk while converting to float32."""
+    np.copyto(destination[start:stop], source[start:stop], casting="unsafe")
+
+
+def _as_float32_parallel(array, max_workers):
+    """Return an array as float32, parallelizing full-stack dtype conversion."""
+    source = np.asarray(array)
+    if source.dtype == np.float32 and source.flags.writeable:
+        return source
+
+    destination = np.empty(source.shape, dtype=np.float32)
+    if source.size == 0:
+        return destination
+    if source.ndim == 0:
+        np.copyto(destination, source, casting="unsafe")
+        return destination
+
+    try:
+        requested_workers = int(max_workers)
+    except (TypeError, ValueError):
+        requested_workers = 1
+    worker_count = min(max(1, requested_workers), source.shape[0])
+    boundaries = np.linspace(0, source.shape[0], worker_count + 1, dtype=int)
+    chunks = list(zip(boundaries[:-1], boundaries[1:]))
+
+    if worker_count == 1:
+        _copy_axis0_chunk(source, destination, *chunks[0])
+        return destination
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(
+                _copy_axis0_chunk,
+                source,
+                destination,
+                int(start),
+                int(stop),
+            )
+            for start, stop in chunks
+        ]
+        for future in futures:
+            future.result()
+    return destination
+
+
+def _denormalize_in_place(array, std, mean):
+    """Undo normalization without allocating full-stack intermediates."""
+    array *= std
+    array += mean
+    return array
 
 
 
@@ -186,8 +240,51 @@ class TestingClass():
         self.local_model.to(self.device)
         
     def _read_stack(self, path):
-        noisy_img = tifffile.TiffFile(path).asarray()
-        return np.asarray(noisy_img, dtype=np.float32)
+        path_name = Path(path).name
+        mapped_source = False
+        try:
+            # Copy-on-write keeps native float32 TIFFs lazy while allowing the
+            # dataset to normalize them in place without modifying the file.
+            noisy_img = tifffile.memmap(path, mode="c", series=0)
+            mapped_source = True
+            read_method = "memory-mapped"
+        except (OSError, ValueError):
+            # Compressed and non-contiguous TIFF data cannot be memory-mapped.
+            with tifffile.TiffFile(path) as tif:
+                noisy_img = tif.asarray()
+            read_method = "loaded"
+
+        if noisy_img.dtype == np.float32 and noisy_img.flags.writeable:
+            print(
+                f"Read {path_name} as {read_method} float32 data "
+                f"with shape {noisy_img.shape}.",
+                flush=True,
+            )
+            return np.asarray(noisy_img)
+
+        try:
+            requested_workers = int(self.n_cpu)
+        except (TypeError, ValueError):
+            requested_workers = 1
+        slice_count = noisy_img.shape[0] if noisy_img.ndim else 1
+        worker_count = min(max(1, requested_workers), max(1, slice_count))
+        if noisy_img.dtype == np.float32:
+            action = f"Copying {read_method} {path_name} into writable float32 memory"
+        else:
+            action = (
+                f"Converting {read_method} {path_name} from {noisy_img.dtype} "
+                "to float32"
+            )
+        print(f"{action} with {worker_count} worker(s)...", flush=True)
+        try:
+            converted_img = _as_float32_parallel(noisy_img, worker_count)
+        finally:
+            if mapped_source:
+                mmap_handle = getattr(noisy_img, "_mmap", None)
+                if mmap_handle is not None:
+                    mmap_handle.close()
+        print(f"Finished preparing {path_name} as float32.", flush=True)
+        return converted_img
 
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":
@@ -409,8 +506,15 @@ class TestingClass():
                     torch.from_numpy(denoised_stack[validation_mask]),
                     torch.from_numpy(noisy_stack[validation_mask]),
                 )
-            # change nan values to 0 and denormalize
-            self.denoised_stack = denoised_stack * self.dataloader.dataset.std_img.numpy() + self.dataloader.dataset.mean_img.numpy()
+            # Denormalize without allocating full-size multiplication and
+            # addition intermediates.
+            print("Denormalizing inference output in place...", flush=True)
+            self.denoised_stack = _denormalize_in_place(
+                denoised_stack,
+                self.dataloader.dataset.std_img.numpy(),
+                self.dataloader.dataset.mean_img.numpy(),
+            )
+            print("Finished denormalizing inference output.", flush=True)
 
     def _infer_single_input(self, noisy_img):
         if self.dimensionality == "3+1D":
