@@ -86,10 +86,9 @@ class TestingClass():
             return False
 
     def _dataloader_kwargs(self):
-        # This inference dataset keeps the full input stack in memory. Spawning worker
-        # processes can duplicate that tensor and trigger host OOM kills on large volumes.
-        # Prefer the main process unless explicitly overridden by future refactors.
-        num_workers = 0 if self._in_ipykernel() else 0
+        # Notebook kernels are more prone to worker crashes; command-line jobs use
+        # the configured worker count supplied by n_cpu.
+        num_workers = 0 if self._in_ipykernel() else self.n_cpu
         kwargs = {
             "batch_size": self.batch_size,
             "num_workers": num_workers,
