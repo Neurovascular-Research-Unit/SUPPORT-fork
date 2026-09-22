@@ -123,6 +123,36 @@ guidance.
 Slurm sets `CUDA_VISIBLE_DEVICES`; the batch runner leaves that allocation
 unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
 
+## Independent Multi-GPU SNR Sweeps
+
+`notebooks/snr_test.py` distributes independent `(input TIFF, power)` jobs
+across GPUs. Configure `path_support`, `dir_noisy`, `power_percent`, and the
+other sweep settings near the top of the script, then run:
+
+```bash
+python -u notebooks/snr_test.py
+```
+
+By default, `gpu_ids = None` uses every GPU visible to the process. Select a
+subset with `--gpus`; these are logical IDs within the inherited
+`CUDA_VISIBLE_DEVICES` allocation (including a Slurm allocation):
+
+```bash
+python -u notebooks/snr_test.py --gpus 0 2
+```
+
+Use `--gpus 0` for the single-GPU fallback. Each selected GPU receives its own
+worker process and runs complete jobs serially; this is job-level parallelism,
+not `DataParallel` or distributed model training. Training batch size and the
+other model hyperparameters therefore retain their single-GPU meaning.
+
+Resource settings are per GPU. In particular, `n_cpu = 8` can create up to
+eight DataLoader workers for each GPU worker, and each concurrent job needs its
+own host RAM, GPU memory, and input I/O bandwidth. Allocate CPUs and memory for
+the selected GPU count, or select fewer GPUs when those resources are limited.
+Run only one SNR sweep process against a given output tree at a time; that one
+process schedules all selected GPUs itself.
+
 ## Running the Notebook
 
 ### Step-by-Step Instructions
