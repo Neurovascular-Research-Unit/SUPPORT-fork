@@ -20,8 +20,8 @@
     },
     "test": {
       "patch_interval": [1, 24, 24],
-      "batch_size": 512,
-      "prefetch_factor": 6,
+      "batch_size": 256,
+      "prefetch_factor": 1,
       "pad": true
     }
   },
@@ -72,8 +72,8 @@
     },
     "test": {
       "patch_interval": [1, 24, 24],
-      "batch_size": 512,
-      "prefetch_factor": 6,
+      "batch_size": 256,
+      "prefetch_factor": 1,
       "pad": true
     }
   }
