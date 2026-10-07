@@ -25,6 +25,20 @@ from utils.loss_plot import plotASCII
 from IPython.display import clear_output
 
 
+def _mean_and_nanmean(values):
+    """Return the ordinary mean and the NaN-ignoring mean of loss values."""
+    array = np.asarray(values, dtype=np.float64)
+    if array.size == 0:
+        return float("nan"), float("nan")
+    mean = float(np.mean(array))
+    nanmean = (
+        float("nan")
+        if np.isnan(array).all()
+        else float(np.nanmean(array))
+    )
+    return mean, nanmean
+
+
 class TrainingClass():
     """
     Class implementing training process.
@@ -333,6 +347,8 @@ class TrainingClass():
         
         """
         noisy_imgs = []
+        normalization_group_ids = []
+        uses_4d_source_normalization = False
         print("\033[1;31mLoaded Files -----> \033[0m")
         frozen_input_paths = getattr(self, "_frozen_input_paths", None)
         if frozen_input_paths is not None:
@@ -361,10 +377,19 @@ class TrainingClass():
         noisy_stems = [str(path.stem) for path in noisy_paths]
         slen = max((len(s) for s in noisy_stems), default=0)
 
-        for path, noisy_stem in zip(noisy_paths, noisy_stems):
+        for source_index, (path, noisy_stem) in enumerate(zip(noisy_paths, noisy_stems)):
             noisy_img = self._read_stack(path)
             print(f"\033[1m{noisy_stem:<{slen}}\033[0m  {self._describe_stack(noisy_img.shape)}")
-            noisy_imgs.extend(self._prepare_training_stacks(noisy_img))
+            prepared_stacks = self._prepare_training_stacks(noisy_img)
+            noisy_imgs.extend(prepared_stacks)
+            if not self.train_gen:
+                normalization_group_ids.extend(
+                    [source_index] * len(prepared_stacks)
+                )
+                uses_4d_source_normalization = (
+                    uses_4d_source_normalization
+                    or (self.dimensionality == "3+1D" and noisy_img.ndim == 4)
+                )
 
         dataset = DatasetSUPPORT(
             noisy_imgs=noisy_imgs,
@@ -374,6 +399,11 @@ class TrainingClass():
             random_patch=True,
             load_to_memory=self.load_to_memory,
             normalize_across_images=self.train_gen,
+            normalization_group_ids=(
+                normalization_group_ids
+                if uses_4d_source_normalization
+                else None
+            ),
         )
         if self.train_gen:
             self.normalization_scope = "dataset"
@@ -385,6 +415,14 @@ class TrainingClass():
                 f"voxels={self.normalization_voxel_count} "
                 f"mean={self.normalization_mean} "
                 f"std={self.normalization_std} correction=1"
+            )
+            print(diagnostic)
+            if hasattr(self, "log"):
+                self.log.log_diagnostic(diagnostic)
+        elif uses_4d_source_normalization:
+            diagnostic = (
+                "4-D training normalization: one mean/std per source TIFF "
+                "across all T, Z, Y, and X voxels."
             )
             print(diagnostic)
             if hasattr(self, "log"):
@@ -1005,14 +1043,22 @@ class TrainingClass():
 
     def _write_pending_validation(self, epoch, training_metrics):
         """Atomically remember validation work paired with a saved epoch."""
+        serialized_metrics = {
+            "loss_total": float(training_metrics["loss_total"]),
+            "loss_l1": float(training_metrics["loss_l1"]),
+            "loss_l2": float(training_metrics["loss_l2"]),
+        }
+        for name in (
+            "loss_total_nanmean",
+            "loss_l1_nanmean",
+            "loss_l2_nanmean",
+        ):
+            if name in training_metrics:
+                serialized_metrics[name] = float(training_metrics[name])
         payload = {
             "version": 1,
             "epoch": int(epoch),
-            "training_metrics": {
-                "loss_total": float(training_metrics["loss_total"]),
-                "loss_l1": float(training_metrics["loss_l1"]),
-                "loss_l2": float(training_metrics["loss_l2"]),
-            },
+            "training_metrics": serialized_metrics,
         }
         destination = self._pending_validation_path()
         file_descriptor, temporary_name = tempfile.mkstemp(
@@ -1057,6 +1103,22 @@ class TrainingClass():
                 name: float(raw_metrics[name])
                 for name in ("loss_total", "loss_l1", "loss_l2")
             }
+            nanmean_names = (
+                "loss_total_nanmean",
+                "loss_l1_nanmean",
+                "loss_l2_nanmean",
+            )
+            present_nanmeans = [
+                name for name in nanmean_names if name in raw_metrics
+            ]
+            if present_nanmeans and len(present_nanmeans) != len(nanmean_names):
+                raise ValueError("incomplete nanmean training metrics")
+            training_metrics.update(
+                {
+                    name: float(raw_metrics[name])
+                    for name in present_nanmeans
+                }
+            )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise RuntimeError(
                 f"Invalid pending-validation state in {path}"
@@ -1094,6 +1156,18 @@ class TrainingClass():
                     loss_total=training_metrics["loss_total"],
                     loss_l1=training_metrics["loss_l1"],
                     loss_l2=training_metrics["loss_l2"],
+                    loss_total_nanmean=training_metrics.get(
+                        "loss_total_nanmean",
+                        training_metrics["loss_total"],
+                    ),
+                    loss_l1_nanmean=training_metrics.get(
+                        "loss_l1_nanmean",
+                        training_metrics["loss_l1"],
+                    ),
+                    loss_l2_nanmean=training_metrics.get(
+                        "loss_l2_nanmean",
+                        training_metrics["loss_l2"],
+                    ),
                     extra=extra,
                 )
             except Exception:
@@ -1389,14 +1463,14 @@ class TrainingClass():
                 lh_L.append(loss_sum.item())
                 lh_L1.append(loss_L1_pixelwise.item())
                 lh_L2.append(loss_L2_pixelwise.item())
-                L_mean = np.mean(np.array(lh_L))
-                L1_mean = np.mean(np.array(lh_L1))
-                L2_mean = np.mean(np.array(lh_L2))
+                L_mean, L_nanmean = _mean_and_nanmean(lh_L)
+                L1_mean, L1_nanmean = _mean_and_nanmean(lh_L1)
+                L2_mean, L2_nanmean = _mean_and_nanmean(lh_L2)
                 pbar.set_postfix(
                     {
-                        'L': L_mean,
-                        'L1': L1_mean,
-                        'L2': L2_mean,
+                        'L': L_nanmean,
+                        'L1': L1_nanmean,
+                        'L2': L2_nanmean,
                     }
                 )
                 batch = i + 1
@@ -1412,6 +1486,9 @@ class TrainingClass():
                         L1_mean=L1_mean,
                         L2_mean=L2_mean,
                         L_mean=L_mean,
+                        L1_nanmean=L1_nanmean,
+                        L2_nanmean=L2_nanmean,
+                        L_nanmean=L_nanmean,
                     )
                 if batch in checkpoint_batches:
                     # When an interrupted epoch restarts exactly on its latest
@@ -1434,6 +1511,9 @@ class TrainingClass():
                                     "loss_total": L_mean,
                                     "loss_l1": L1_mean,
                                     "loss_l2": L2_mean,
+                                    "loss_total_nanmean": L_nanmean,
+                                    "loss_l1_nanmean": L1_nanmean,
+                                    "loss_l2_nanmean": L2_nanmean,
                                 },
                             )
                         self.save_checkpoint(
@@ -1471,14 +1551,17 @@ class TrainingClass():
             self.dataloader.dataset.precompute_indices()
             self.train()
             t_inter = int(time.mktime(time.localtime()) - t_init)
-            L_mean = np.mean(np.array(self.lh_L))
-            L1_mean = np.mean(np.array(self.lh_L1))
-            L2_mean = np.mean(np.array(self.lh_L2))
+            L_mean, L_nanmean = _mean_and_nanmean(self.lh_L)
+            L1_mean, L1_nanmean = _mean_and_nanmean(self.lh_L1)
+            L2_mean, L2_nanmean = _mean_and_nanmean(self.lh_L2)
             lh.append(L_mean)
             training_metrics = {
                 "loss_total": float(L_mean),
                 "loss_l1": float(L1_mean),
                 "loss_l2": float(L2_mean),
+                "loss_total_nanmean": float(L_nanmean),
+                "loss_l1_nanmean": float(L1_nanmean),
+                "loss_l2_nanmean": float(L2_nanmean),
             }
             saves_epoch_checkpoint = (
                 self.checkpoints

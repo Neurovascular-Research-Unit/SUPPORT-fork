@@ -26,6 +26,7 @@ def load_testing_module():
     support_module.SUPPORT = object
     dataset_module = types.ModuleType("utils.dataset")
     dataset_module.DatasetSUPPORT_test_stitch = object
+    dataset_module.dataset_stats = mock.Mock()
 
     module_path = Path(__file__).resolve().parents[1] / "utils" / "test_collection.py"
     spec = importlib.util.spec_from_file_location(
@@ -232,6 +233,77 @@ class TestingStackConversionTests(unittest.TestCase):
         tiff_context.__enter__.return_value.asarray.assert_called_once_with()
         self.assertEqual(converted.dtype, np.float32)
         np.testing.assert_array_equal(converted, source.astype(np.float32))
+
+
+class TestingFourDimensionalNormalizationTests(unittest.TestCase):
+    @staticmethod
+    def _tester(cache_directory: Path) -> TestingClass:
+        tester = TestingClass.__new__(TestingClass)
+        tester.normalization_mean = None
+        tester.normalization_std = None
+        tester._create_cache_dir = lambda label: cache_directory
+        tester._cleanup_cache_dir = lambda path: None
+        return tester
+
+    def test_all_z_planes_receive_the_full_volume_statistics(self) -> None:
+        volume = np.empty((2, 2, 2, 2), dtype=np.float32)
+        volume[:, 0, :, :] = np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+        volume[:, 1, :, :] = 100 + np.arange(8, dtype=np.float32).reshape(2, 2, 2)
+        expected_mean = float(np.mean(volume, dtype=np.float64))
+        expected_std = float(np.std(volume, dtype=np.float64, ddof=1))
+
+        def calculate_stats(images):
+            self.assertEqual(len(images), 1)
+            self.assertIs(images[0], volume)
+            return np.float64(expected_mean), np.float64(expected_std), volume.size
+
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            tester = self._tester(Path(temporary_dir))
+            received_stats = []
+
+            def run_slice(noisy_slice, normalization_mean=None, normalization_std=None):
+                received_stats.append((normalization_mean, normalization_std))
+                return noisy_slice
+
+            tester._run_inference_on_stack = run_slice
+            with mock.patch.object(
+                TESTING_MODULE,
+                "dataset_stats",
+                side_effect=calculate_stats,
+            ) as stats:
+                denoised = tester._run_inference_on_4d_stack(volume)
+
+        stats.assert_called_once()
+        self.assertEqual(
+            received_stats,
+            [(expected_mean, expected_std), (expected_mean, expected_std)],
+        )
+        np.testing.assert_array_equal(denoised, volume)
+
+    def test_explicit_generalized_statistics_bypass_per_volume_statistics(self) -> None:
+        volume = np.arange(16, dtype=np.float32).reshape(2, 2, 2, 2)
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            tester = self._tester(Path(temporary_dir))
+            tester.normalization_mean = 12.5
+            tester.normalization_std = 3.25
+            received_stats = []
+
+            def run_slice(noisy_slice, normalization_mean=None, normalization_std=None):
+                received_stats.append((normalization_mean, normalization_std))
+                return noisy_slice
+
+            tester._run_inference_on_stack = run_slice
+            with mock.patch.object(
+                TESTING_MODULE,
+                "dataset_stats",
+                side_effect=AssertionError("explicit statistics should be reused"),
+            ):
+                tester._run_inference_on_4d_stack(volume)
+
+        self.assertEqual(
+            received_stats,
+            [(12.5, 3.25), (12.5, 3.25)],
+        )
 
 
 if __name__ == "__main__":

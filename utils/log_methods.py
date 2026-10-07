@@ -1,8 +1,24 @@
+import csv
 import json
 import os
 import logging
+import stat
+import tempfile
 from datetime import datetime
 from pathlib import Path
+
+
+LOSS_CSV_FIELDS = (
+    "epoch",
+    "time",
+    "loss_total",
+    "loss_l1",
+    "loss_l2",
+    "loss_total_nanmean",
+    "loss_l1_nanmean",
+    "loss_l2_nanmean",
+)
+LEGACY_LOSS_CSV_FIELDS = LOSS_CSV_FIELDS[:5]
 
 def _safe_serialize(v):
     try:
@@ -79,13 +95,83 @@ class LogManager:
         for k, v in params.items():
             self.logger.info(f"{k}: {v}")
 
-    def append_loss(self, epoch, loss_total=None, loss_l1=None, loss_l2=None, extra=None):
+    def _append_loss_csv(self, rec):
+        """Append a loss row, upgrading the legacy five-column CSV if needed."""
+        existing_rows = []
+        if self.loss_csv.is_file():
+            with open(self.loss_csv, "r", newline="") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames == list(LOSS_CSV_FIELDS):
+                    with open(self.loss_csv, "a", newline="") as output:
+                        csv.DictWriter(
+                            output,
+                            fieldnames=LOSS_CSV_FIELDS,
+                            extrasaction="ignore",
+                        ).writerow(rec)
+                    return
+                if reader.fieldnames != list(LEGACY_LOSS_CSV_FIELDS):
+                    raise ValueError(
+                        f"Unexpected training loss CSV schema in {self.loss_csv}"
+                    )
+                existing_rows = list(reader)
+
+        if self.loss_csv.exists():
+            output_mode = stat.S_IMODE(self.loss_csv.stat().st_mode)
+        else:
+            current_umask = os.umask(0)
+            os.umask(current_umask)
+            output_mode = 0o666 & ~current_umask
+        file_descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.loss_csv.name}.",
+            suffix=".tmp",
+            dir=self.loss_csv.parent,
+        )
+        os.close(file_descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            with temporary_path.open("w", newline="") as output:
+                writer = csv.DictWriter(
+                    output,
+                    fieldnames=LOSS_CSV_FIELDS,
+                    extrasaction="ignore",
+                )
+                writer.writeheader()
+                for row in existing_rows:
+                    # Historical nanmeans cannot be recovered from a NaN mean.
+                    # Copying the legacy value is exact whenever it was finite
+                    # and remains conservatively NaN otherwise.
+                    row["loss_total_nanmean"] = row["loss_total"]
+                    row["loss_l1_nanmean"] = row["loss_l1"]
+                    row["loss_l2_nanmean"] = row["loss_l2"]
+                    writer.writerow(row)
+                writer.writerow(rec)
+            os.chmod(temporary_path, output_mode)
+            os.replace(temporary_path, self.loss_csv)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+
+    def append_loss(
+        self,
+        epoch,
+        loss_total=None,
+        loss_l1=None,
+        loss_l2=None,
+        extra=None,
+        *,
+        loss_total_nanmean=None,
+        loss_l1_nanmean=None,
+        loss_l2_nanmean=None,
+    ):
         rec = {
             "epoch": int(epoch),
             "time": datetime.now().isoformat(),
             "loss_total": _safe_serialize(loss_total),
             "loss_l1": _safe_serialize(loss_l1),
             "loss_l2": _safe_serialize(loss_l2),
+            "loss_total_nanmean": _safe_serialize(loss_total_nanmean),
+            "loss_l1_nanmean": _safe_serialize(loss_l1_nanmean),
+            "loss_l2_nanmean": _safe_serialize(loss_l2_nanmean),
         }
         if extra is not None:
             rec["extra"] = _safe_serialize(extra)
@@ -93,12 +179,13 @@ class LogManager:
         with open(self.json_path, "w") as f:
             json.dump(self.data, f, indent=2)
         # append to CSV for quick plotting
-        header = not self.loss_csv.exists()
-        with open(self.loss_csv, "a") as f:
-            if header:
-                f.write("epoch,time,loss_total,loss_l1,loss_l2\n")
-            f.write(f'{rec["epoch"]},{rec["time"]},{rec["loss_total"]},{rec["loss_l1"]},{rec["loss_l2"]}\n')
-        self.logger.info(f"Epoch {epoch}: loss_total={loss_total} l1={loss_l1} l2={loss_l2}")
+        self._append_loss_csv(rec)
+        self.logger.info(
+            f"Epoch {epoch}: "
+            f"mean(loss_total={loss_total} l1={loss_l1} l2={loss_l2}) "
+            f"nanmean(loss_total={loss_total_nanmean} "
+            f"l1={loss_l1_nanmean} l2={loss_l2_nanmean})"
+        )
 
     def append_batch_loss(
         self,
@@ -108,11 +195,16 @@ class LogManager:
         L1_mean,
         L2_mean,
         L_mean,
+        L1_nanmean=None,
+        L2_nanmean=None,
+        L_nanmean=None,
     ):
-        """Write generalized-training running loss means to the text log."""
+        """Write both generalized-training running loss means to the log."""
         self.logger.info(
             f"Epoch {epoch} Batch {batch}/{total_batches}: "
-            f"L1_mean={L1_mean} L2_mean={L2_mean} L_mean={L_mean}"
+            f"L1_mean={L1_mean} L2_mean={L2_mean} L_mean={L_mean} "
+            f"L1_nanmean={L1_nanmean} L2_nanmean={L2_nanmean} "
+            f"L_nanmean={L_nanmean}"
         )
 
     def log_diagnostic(self, text):

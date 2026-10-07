@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import math
 import sys
 import tempfile
 import types
 import unittest
+import warnings
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,6 +94,179 @@ class RecordingStateSource:
 
 
 class TrainingLifecycleTests(unittest.TestCase):
+    def test_loss_aggregates_retain_mean_and_ignore_nans_in_nanmean(self) -> None:
+        mean, nanmean = TRAINING_MODULE._mean_and_nanmean(
+            [1.0, float("nan"), 3.0]
+        )
+
+        self.assertTrue(math.isnan(mean))
+        self.assertEqual(nanmean, 2.0)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            all_nan_mean, all_nan_nanmean = TRAINING_MODULE._mean_and_nanmean(
+                [float("nan"), float("nan")]
+            )
+
+        self.assertTrue(math.isnan(all_nan_mean))
+        self.assertTrue(math.isnan(all_nan_nanmean))
+        self.assertEqual(caught, [])
+
+    def test_tqdm_uses_nanmean_while_batch_log_retains_both_means(self) -> None:
+        class FakeLoss:
+            def __init__(self, value) -> None:
+                self.value = float(value)
+
+            def __rmul__(self, coefficient):
+                return FakeLoss(coefficient * self.value)
+
+            def __add__(self, other):
+                return FakeLoss(self.value + other.value)
+
+            def backward(self) -> None:
+                pass
+
+            def item(self):
+                return self.value
+
+        class SequenceLoss:
+            def __init__(self) -> None:
+                self.values = iter([1.0, float("nan"), 3.0])
+
+            def __call__(self, prediction, target):
+                return FakeLoss(next(self.values))
+
+        class FakeImage:
+            shape = (1, 3, 2, 2)
+
+            def to(self, device):
+                return self
+
+            def __getitem__(self, key):
+                return self
+
+        class FakeModel:
+            def train(self) -> None:
+                pass
+
+            def __call__(self, image):
+                return image
+
+        class FakeOptimizer:
+            def zero_grad(self) -> None:
+                pass
+
+        class FakeScaler:
+            def scale(self, loss):
+                return loss
+
+            def step(self, optimizer) -> None:
+                pass
+
+            def update(self) -> None:
+                pass
+
+        class FakeAutocast:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        class FakeProgress:
+            def __init__(self, values) -> None:
+                self.values = values
+                self.postfixes = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def __iter__(self):
+                return iter(self.values)
+
+            def set_postfix(self, values) -> None:
+                self.postfixes.append(dict(values))
+
+        trainer = TrainingClass.__new__(TrainingClass)
+        trainer.bs_size = [3, 3]
+        trainer.local_model = FakeModel()
+        trainer.dataloader = [(FakeImage(), None, None)] * 3
+        trainer.device = "cpu"
+        trainer.use_amp = False
+        trainer.rng = object()
+        trainer.optimizer = FakeOptimizer()
+        trainer.scaler = FakeScaler()
+        trainer.loss_coef = [0.5, 0.5]
+        trainer.epoch = 0
+        trainer.train_gen = True
+        trainer.latest_checkpoint_epoch = None
+        trainer.latest_checkpoint_batch = None
+        trainer._scheduled_batch_checkpoint_batches = lambda total: set()
+        batch_logs = []
+        trainer.log = SimpleNamespace(
+            append_batch_loss=lambda *args, **values: batch_logs.append(values)
+        )
+        progress = FakeProgress(trainer.dataloader)
+        fake_nn = SimpleNamespace(
+            L1Loss=SequenceLoss,
+            MSELoss=SequenceLoss,
+        )
+        fake_amp = SimpleNamespace(
+            autocast=lambda *args, **kwargs: FakeAutocast()
+        )
+
+        with (
+            mock.patch.object(TRAINING_MODULE, "tqdm", return_value=progress),
+            mock.patch.object(
+                TRAINING_MODULE,
+                "random_transform",
+                side_effect=lambda input, target, **kwargs: (input, target),
+            ),
+            mock.patch.object(TRAINING_MODULE.torch, "nn", fake_nn, create=True),
+            mock.patch.object(TRAINING_MODULE.torch, "amp", fake_amp, create=True),
+            mock.patch.object(
+                TRAINING_MODULE.torch,
+                "unsqueeze",
+                side_effect=lambda image, dim: image,
+                create=True,
+            ),
+        ):
+            trainer.train()
+
+        self.assertEqual(progress.postfixes[-1], {"L": 2.0, "L1": 2.0, "L2": 2.0})
+        self.assertTrue(math.isnan(batch_logs[-1]["L_mean"]))
+        self.assertTrue(math.isnan(batch_logs[-1]["L1_mean"]))
+        self.assertTrue(math.isnan(batch_logs[-1]["L2_mean"]))
+        self.assertEqual(batch_logs[-1]["L_nanmean"], 2.0)
+        self.assertEqual(batch_logs[-1]["L1_nanmean"], 2.0)
+        self.assertEqual(batch_logs[-1]["L2_nanmean"], 2.0)
+
+    def test_legacy_pending_metrics_log_nanmean_fallbacks(self) -> None:
+        trainer = TrainingClass.__new__(TrainingClass)
+        trainer.log = mock.Mock()
+        trainer.epoch_complete_callback = None
+        training_metrics = {
+            "loss_total": 0.5,
+            "loss_l1": 0.4,
+            "loss_l2": 0.6,
+        }
+
+        trainer._record_epoch_completion(0, training_metrics, None)
+
+        trainer.log.append_loss.assert_called_once_with(
+            0,
+            loss_total=0.5,
+            loss_l1=0.4,
+            loss_l2=0.6,
+            loss_total_nanmean=0.5,
+            loss_l1_nanmean=0.4,
+            loss_l2_nanmean=0.6,
+            extra=None,
+        )
+
     def test_epoch_checkpoint_precedes_validation_and_completion(self) -> None:
         events: list[str] = []
         validation_metrics = {
@@ -260,12 +435,20 @@ class TrainingLifecycleTests(unittest.TestCase):
         trainer.epoch_start_callback = lambda *args: events.append("start")
         trainer.epoch_complete_callback = lambda *args: events.append("complete")
         trainer.train = lambda: events.append("train")
+        expected_training_metrics = {
+            "loss_total": 0.5,
+            "loss_l1": 0.4,
+            "loss_l2": 0.6,
+            "loss_total_nanmean": 0.45,
+            "loss_l1_nanmean": 0.35,
+            "loss_l2_nanmean": 0.55,
+        }
 
         def validate(active_trainer, epoch, training_metrics):
             self.assertIs(active_trainer, trainer)
             self.assertEqual(active_trainer.epoch, 0)
             self.assertEqual(epoch, 0)
-            self.assertEqual(training_metrics["loss_total"], 0.5)
+            self.assertEqual(training_metrics, expected_training_metrics)
             events.append("validation")
             return validation_metrics
 
@@ -275,7 +458,7 @@ class TrainingLifecycleTests(unittest.TestCase):
             trainer.pth_dir = temporary_directory
             trainer._write_pending_validation(
                 0,
-                {"loss_total": 0.5, "loss_l1": 0.4, "loss_l2": 0.6},
+                expected_training_metrics,
             )
             trainer.test()
             self.assertFalse(trainer._pending_validation_path().exists())

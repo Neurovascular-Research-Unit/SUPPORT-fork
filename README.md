@@ -227,8 +227,10 @@ process schedules all selected GPUs itself.
    directory result from the test directory name. Before training, generalized
    mode computes one voxel-weighted mean and sample standard deviation across
    every discovered training TIFF and applies that shared z-score to all
-   training patches. This keeps all batch losses on one normalized scale;
-   normal mode retains its existing per-stack normalization.
+   training patches. This keeps all batch losses on one normalized scale.
+   Normal mode uses one mean and sample standard deviation per source TIFF; for
+   a 4-D TIFF, that single pair spans all `T`, `Z`, `Y`, and `X` voxels and is
+   shared by every extracted Z plane.
 
    A checkpoint bundle contains the model, optimizer, and AMP scaler when AMP is
    enabled. In normal mode, `rm_intermediaries` controls whether older epoch
@@ -278,11 +280,15 @@ process schedules all selected GPUs itself.
 
 8. **Monitor training progress**:
 
-   - Training progress is displayed with a progress bar.
+   - Training progress is displayed with a progress bar using the running
+     NaN-ignoring mean losses.
    - Loss values are plotted in ASCII format during training.
    - During generalized training, every completed batch appends the running
-     means `L1_mean`, `L2_mean`, and `L_mean` to
-     `<exp_name>_train.log`. `L_mean` is the combined training loss. The same log
+     ordinary means `L1_mean`, `L2_mean`, and `L_mean` and the parallel
+     NaN-ignoring means `L1_nanmean`, `L2_nanmean`, and `L_nanmean` to
+     `<exp_name>_train.log`. `L_mean` and `L_nanmean` are the combined training
+     losses. Epoch JSON and CSV records likewise retain the existing ordinary
+     mean fields and add matching `*_nanmean` fields. The same log
      records the shared training mean, standard deviation, and voxel count.
    - Normal-mode checkpoints are written at epoch boundaries. Generalized-mode
      rolling checkpoints are written at the four batch-quartile endpoints; each

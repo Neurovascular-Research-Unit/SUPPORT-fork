@@ -99,4 +99,6 @@ def simulate_lower_power(video,
     # Convert to pseudo-photons, apply Poisson noise, convert back - have to assume photons_per_unit
     noisy_video = rng.poisson(noisy_video * photons_per_unit).astype(np.float32) / photons_per_unit
 
+    # noisy_video = noisy_video + background_level
+
     return noisy_video

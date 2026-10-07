@@ -309,7 +309,8 @@ def get_coordinate(img_size, patch_size, patch_interval):
 
 class DatasetSUPPORT(Dataset):
     def __init__(self, noisy_imgs, patch_size=[61, 128, 128], patch_interval=[10, 64, 64], load_to_memory=True,\
-        transform=None, random_patch=True, random_patch_seed=0, normalize_across_images=False):
+        transform=None, random_patch=True, random_patch_seed=0, normalize_across_images=False,
+        normalization_group_ids=None):
         """
         Arguments:
             noisy_imgs: list of noisy image stack ([Tensor with dimension [t, x, y]])
@@ -321,6 +322,10 @@ class DatasetSUPPORT(Dataset):
             random_patch_seed: seed for randomness (int)
             normalize_across_images: use one voxel-weighted mean/std for every
                 image rather than normalizing each image separately (bool)
+            normalization_group_ids: optional group identifier for each image.
+                Images with the same identifier share one voxel-weighted
+                mean/std. This lets all Z planes derived from one 4-D TIFF use
+                that TIFF's statistics while keeping different TIFFs separate.
             algorithm: the algorithm of use (str)
         """
         # check arguments
@@ -330,6 +335,17 @@ class DatasetSUPPORT(Dataset):
             raise Exception("length of patch_interval must be 3")      
         if type(normalize_across_images) is not bool:
             raise TypeError("normalize_across_images must be True or False")
+        if normalization_group_ids is not None:
+            normalization_group_ids = list(normalization_group_ids)
+            if len(normalization_group_ids) != len(noisy_imgs):
+                raise ValueError(
+                    "normalization_group_ids must contain one identifier per image"
+                )
+            if normalize_across_images:
+                raise ValueError(
+                    "normalization_group_ids cannot be combined with "
+                    "normalize_across_images=True"
+                )
 
         if normalize_across_images and load_to_memory:
             noisy_imgs = [
@@ -357,6 +373,7 @@ class DatasetSUPPORT(Dataset):
         self.precomputed_indices = None
         self.load_to_memory = load_to_memory
         self.normalize_across_images = normalize_across_images
+        self.normalization_group_ids = normalization_group_ids
 
         self.noisy_imgs = noisy_imgs
         self.dataset_mean = None
@@ -384,6 +401,58 @@ class DatasetSUPPORT(Dataset):
                 print("Normalized all noisy images with one shared dataset mean/std.")
             else:
                 print("Stored shared dataset mean/std for on-the-fly normalization.")
+        elif self.normalization_group_ids is not None:
+            grouped_indices = {}
+            for image_index, group_id in enumerate(self.normalization_group_ids):
+                try:
+                    grouped_indices.setdefault(group_id, []).append(image_index)
+                except TypeError as exc:
+                    raise TypeError(
+                        "normalization_group_ids must contain hashable values"
+                    ) from exc
+
+            grouped_stats = {}
+            self.mean_images = [None] * len(noisy_imgs)
+            self.std_images = [None] * len(noisy_imgs)
+            for group_id, image_indices in grouped_indices.items():
+                mean_image, std_image, voxel_count = dataset_stats(
+                    noisy_imgs[index] for index in image_indices
+                )
+                # Upstream SUPPORT normalizes float32 input with float32
+                # statistics. Keep that representation consistent for both
+                # resident and lazy-loading paths.
+                mean_image = mean_image.detach().cpu().float()
+                std_image = std_image.detach().cpu().float()
+                grouped_stats[group_id] = {
+                    "mean": mean_image,
+                    "std": std_image,
+                    "voxel_count": voxel_count,
+                }
+                for index in image_indices:
+                    self.mean_images[index] = mean_image
+                    self.std_images[index] = std_image
+
+            self.normalization_group_stats = grouped_stats
+            self.mean_images = (
+                torch.stack(self.mean_images) if self.mean_images else torch.empty(0)
+            )
+            self.std_images = (
+                torch.stack(self.std_images) if self.std_images else torch.empty(0)
+            )
+            if load_to_memory:
+                for index, noisy_img in enumerate(tqdm(noisy_imgs)):
+                    mean_image = self.mean_images[index].to(
+                        device=noisy_img.device,
+                        dtype=noisy_img.dtype,
+                    )
+                    std_image = self.std_images[index].to(
+                        device=noisy_img.device,
+                        dtype=noisy_img.dtype,
+                    )
+                    noisy_img.sub_(mean_image).div_(std_image)
+                print("Normalized noisy images with one mean/std per source TIFF.")
+            else:
+                print("Stored one mean/std per source TIFF for on-the-fly normalization.")
         else:
             self.mean_images = []
             self.std_images = []

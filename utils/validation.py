@@ -51,6 +51,9 @@ class ValidationTracker:
         "training_loss",
         "training_l1",
         "training_l2",
+        "training_loss_nanmean",
+        "training_l1_nanmean",
+        "training_l2_nanmean",
         "validation_loss",
         "validation_l1",
         "validation_l2",
@@ -189,7 +192,14 @@ class ValidationTracker:
         return params
 
     @staticmethod
-    def _upsert_csv(path, fieldnames, rows, key_fields):
+    def _upsert_csv(
+        path,
+        fieldnames,
+        rows,
+        key_fields,
+        legacy_fieldnames=None,
+        legacy_field_sources=None,
+    ):
         path.parent.mkdir(parents=True, exist_ok=True)
         rows = list(rows)
         if path.exists():
@@ -207,10 +217,21 @@ class ValidationTracker:
             with path.open("r", newline="", encoding="utf-8") as file:
                 reader = csv.DictReader(file)
                 if reader.fieldnames != list(fieldnames):
-                    raise ValueError(f"Unexpected validation CSV schema in {path}")
+                    if reader.fieldnames != list(legacy_fieldnames or ()):
+                        raise ValueError(
+                            f"Unexpected validation CSV schema in {path}"
+                        )
+                    existing_rows = list(reader)
+                    for row in existing_rows:
+                        for destination, source in (
+                            legacy_field_sources or {}
+                        ).items():
+                            row[destination] = row[source]
+                else:
+                    existing_rows = list(reader)
                 retained_rows = [
                     row
-                    for row in reader
+                    for row in existing_rows
                     if tuple(row[name] for name in key_fields) not in new_keys
                 ]
 
@@ -254,6 +275,15 @@ class ValidationTracker:
             "training_loss": training_metrics["loss_total"],
             "training_l1": training_metrics["loss_l1"],
             "training_l2": training_metrics["loss_l2"],
+            "training_loss_nanmean": training_metrics.get(
+                "loss_total_nanmean", training_metrics["loss_total"]
+            ),
+            "training_l1_nanmean": training_metrics.get(
+                "loss_l1_nanmean", training_metrics["loss_l1"]
+            ),
+            "training_l2_nanmean": training_metrics.get(
+                "loss_l2_nanmean", training_metrics["loss_l2"]
+            ),
             "validation_loss": validation_metrics["loss_total"],
             "validation_l1": validation_metrics["loss_l1"],
             "validation_l2": validation_metrics["loss_l2"],
@@ -264,6 +294,16 @@ class ValidationTracker:
             self.history_fields,
             [record],
             key_fields=("epoch",),
+            legacy_fieldnames=tuple(
+                name
+                for name in self.history_fields
+                if not name.endswith("_nanmean")
+            ),
+            legacy_field_sources={
+                "training_loss_nanmean": "training_loss",
+                "training_l1_nanmean": "training_l1",
+                "training_l2_nanmean": "training_l2",
+            },
         )
 
         file_records = []
@@ -294,6 +334,15 @@ class ValidationTracker:
                         "training_loss": float(row["training_loss"]),
                         "training_l1": float(row["training_l1"]),
                         "training_l2": float(row["training_l2"]),
+                        "training_loss_nanmean": float(
+                            row["training_loss_nanmean"]
+                        ),
+                        "training_l1_nanmean": float(
+                            row["training_l1_nanmean"]
+                        ),
+                        "training_l2_nanmean": float(
+                            row["training_l2_nanmean"]
+                        ),
                         "validation_loss": float(row["validation_loss"]),
                         "validation_l1": float(row["validation_l1"]),
                         "validation_l2": float(row["validation_l2"]),
@@ -355,7 +404,10 @@ class ValidationTracker:
             validation_metrics,
         )
         print(
-            f"Epoch {epoch}: training loss={training_metrics['loss_total']:.6g}, "
+            f"Epoch {epoch}: training loss "
+            f"mean={training_metrics['loss_total']:.6g}, "
+            "nanmean="
+            f"{training_metrics.get('loss_total_nanmean', training_metrics['loss_total']):.6g}, "
             f"validation loss={validation_metrics['loss_total']:.6g}"
         )
         return validation_metrics

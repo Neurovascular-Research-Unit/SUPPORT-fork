@@ -11,7 +11,7 @@ import numpy as np
 from tqdm import tqdm
 import tifffile
 from utils.log_methods import LogManager
-from utils.dataset import DatasetSUPPORT_test_stitch
+from utils.dataset import DatasetSUPPORT_test_stitch, dataset_stats
 from torch.utils.data import DataLoader
 from support.SUPPORT import SUPPORT
 
@@ -307,10 +307,18 @@ class TestingClass():
         Z, Y, X = noisy_shape
         return f"(X, Y, Z) = ({X}, {Y}, {Z})"
 
-    def generate_dataloader(self, noisy_img):
+    def generate_dataloader(
+        self,
+        noisy_img,
+        normalization_mean=None,
+        normalization_std=None,
+    ):
         """"""
         if self.pad: noisy_img = np.pad(noisy_img, (((self.local_model.in_channels)//2, (self.local_model.in_channels)//2), (0,0), (0,0)), 'reflect')
         noisy_img = torch.from_numpy(noisy_img).type(torch.FloatTensor)
+        if normalization_mean is None and normalization_std is None:
+            normalization_mean = self.normalization_mean
+            normalization_std = self.normalization_std
         test_set = DatasetSUPPORT_test_stitch(
             noisy_img=noisy_img, 
             patch_size=self.patch_size, 
@@ -318,8 +326,8 @@ class TestingClass():
             transform=None,
             random_patch=False,
             load_to_memory=True,
-            normalization_mean=self.normalization_mean,
-            normalization_std=self.normalization_std,
+            normalization_mean=normalization_mean,
+            normalization_std=normalization_std,
         )
         self.dataloader = DataLoader(
             dataset=test_set, 
@@ -409,8 +417,17 @@ class TestingClass():
         except OSError:
             pass
 
-    def _run_inference_on_stack(self, noisy_img):
-        self.generate_dataloader(noisy_img)
+    def _run_inference_on_stack(
+        self,
+        noisy_img,
+        normalization_mean=None,
+        normalization_std=None,
+    ):
+        self.generate_dataloader(
+            noisy_img,
+            normalization_mean=normalization_mean,
+            normalization_std=normalization_std,
+        )
         self.test()
         denoised_stack = self._crop_padding(self.denoised_stack)
         if hasattr(self, "dataloader"):
@@ -422,12 +439,23 @@ class TestingClass():
         return denoised_stack
 
     def _run_inference_on_4d_stack(self, noisy_img):
+        normalization_mean = self.normalization_mean
+        normalization_std = self.normalization_std
+        if normalization_mean is None and normalization_std is None:
+            normalization_mean, normalization_std, _ = dataset_stats([noisy_img])
+            normalization_mean = float(normalization_mean.item())
+            normalization_std = float(normalization_std.item())
+
         cache_dir = self._create_cache_dir("4d_volume_cache")
         total_slices = noisy_img.shape[1]
         try:
             for z_idx in range(total_slices):
                 print(f'  Slice {z_idx+1}/{total_slices}')
-                denoised_slice = self._run_inference_on_stack(np.ascontiguousarray(noisy_img[:, z_idx, :, :]))
+                denoised_slice = self._run_inference_on_stack(
+                    np.ascontiguousarray(noisy_img[:, z_idx, :, :]),
+                    normalization_mean=normalization_mean,
+                    normalization_std=normalization_std,
+                )
                 np.save(cache_dir / f"slice_{z_idx:05d}.npy", denoised_slice.astype(np.float32))
 
             stitched_img = np.empty(
