@@ -123,15 +123,69 @@ guidance.
 Slurm sets `CUDA_VISIBLE_DEVICES`; the batch runner leaves that allocation
 unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
 
-## Independent Multi-GPU SNR Sweeps
+## Staged Multi-GPU SNR Sweeps
 
-`notebooks/snr_test.py` distributes independent `(input TIFF, power)` jobs
-across GPUs. Configure `path_support`, `dir_noisy`, `power_percent`, and the
-other sweep settings near the top of the script, then run:
+`notebooks/snr_test.py` first trains and runs SUPPORT once per raw input TIFF to
+create a persistent denoised reference named `<stem>_original_SPRT.tif`. After
+all successful references are available, it simulates every configured power
+level from that denoised reference—not from the raw acquisition—and gives each
+simulated stack its own SUPPORT model. Configure `dir_noisy`, `dimensionality`,
+`power_percent`, and the other sweep settings near the top of the script, or
+override the paths and sweep settings with command-line options, then run:
 
 ```bash
 python -u notebooks/snr_test.py
 ```
+
+On Biowulf, submit the matching batch entrypoint with shared-storage paths:
+
+```bash
+sbatch scripts/biowulf_snr_test.sbatch \
+  --input-directory /data/$USER/snr-input \
+  --output-directory /data/$USER/snr-output \
+  --dimensionality '3+1D' \
+  --power-percent 100 90 80 70 60 50 40
+```
+
+The batch job requests one A100, 16 CPUs, 240 GB RAM, 200 GB local scratch, and
+24 hours by default. Slurm resource overrides go before the script path; SNR
+runner options go after it. See `scripts/README.md` for multi-GPU sizing and
+scratch guidance.
+
+With `photons_per_unit = None` (the default), the stage barrier independently
+recomputes a photon-transfer calibration for every successful discovered
+raw/original-SUPPORT pair on every invocation.
+It measures raw adjacent-frame variance using the denoised SUPPORT intensity as
+the cleaner horizontal axis, converts the result into SUPPORT image units, and
+reuses that value for every power level from the same source. It also compares
+the primary result with the quietest half of frame-pair locations; disagreement
+warns about motion or biological changes being counted as shot noise.
+By default, both the variance and raw-to-SUPPORT scale fits exclude the first
+60 and final 60 frames. Up to 50 adjacent, non-overlapping pairs are distributed
+across that central window rather than taken only from its beginning. Automatic
+calibration requires repeated-time data. The full SUPPORT workflow expects
+stored `TYX` or `TZYX`; the calibration reader additionally honors a
+metadata-declared `T` axis. Static 3D data require a positive fixed override.
+Set `photons_per_unit` in the script/notebook or pass,
+for example, `--photons-per-unit 0.00075` to bypass estimation. By default the
+sweep stops a source when the linearity diagnostics are unreliable; the
+`--allow-provisional-photon-estimate` flag explicitly relaxes that guard.
+
+All photon-generating intensity—including out-of-focus fluorescence—is scaled
+with laser power. Only a laser-independent additive detector/digitizer baseline
+should stay fixed. Low electronic-noise variance does not necessarily mean that
+this baseline offset is numerically zero. Set it in SUPPORT units with
+`photon_zero_level` or `--photon-zero-level`; zero is the default, and a dark
+or laser-off acquisition is the preferred calibration. The photon-transfer fit
+also reports an
+extrapolated effective pedestal. Set `use_estimated_photon_pedestal = True` or
+pass `--use-estimated-photon-pedestal` to use that model-dependent candidate
+explicitly. This opt-in requires automatic photon calibration and cannot be
+combined with a nonzero fixed pedestal. A dark image region is not used as the
+pedestal because it may contain optical background that should scale.
+The simulator draws independent Poisson samples, so it matches the calibrated
+marginal mean/variance but does not reproduce scanner-correlated noise unless a
+separate, empirically calibrated noise model is added.
 
 By default, `gpu_ids = None` uses every GPU visible to the process. Select a
 subset with `--gpus`; these are logical IDs within the inherited
@@ -143,8 +197,23 @@ python -u notebooks/snr_test.py --gpus 0 2
 
 Use `--gpus 0` for the single-GPU fallback. Each selected GPU receives its own
 worker process and runs complete jobs serially; this is job-level parallelism,
-not `DataParallel` or distributed model training. Training batch size and the
+not `DataParallel` or distributed model training. The original-image stage
+finishes before any dependent power job starts. A failed original skips only
+that source's power jobs; other sources continue. Training batch size and the
 other model hyperparameters therefore retain their single-GPU meaning.
+
+`power_percent` denotes measured excitation power at the specimen. The
+simulator uses the two-photon relationship `intensity_ratio = power_ratio**2`,
+so 50% power produces 25% expected photon-generating intensity. The 100%
+condition is a newly sampled full-power acquisition from the denoised
+reference, so it follows the same simulation and second SUPPORT pass as every
+lower-power condition. New power experiments use names such as
+`<stem>_original_050`, which prevents `resume = True` from loading checkpoints
+created by the older raw-derived workflow. `rm_tmp = True` removes successful
+simulated acquisition TIFFs but always retains the denoised original reference.
+As elsewhere in SUPPORT, checkpoint resume assumes the source TIFF, parameter
+file, and simulation settings have not changed. Use a new output namespace or
+disable/remove the prior checkpoints when changing that provenance.
 
 Resource settings are per GPU. In particular, `n_cpu = 8` can create up to
 eight DataLoader workers for each GPU worker, and each concurrent job needs its

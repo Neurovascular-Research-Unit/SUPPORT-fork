@@ -1,16 +1,15 @@
 # Biowulf SUPPORT training and denoising
 
-The batch entrypoints use the same environment overrides and request these
-resources by default:
+The batch entrypoints use the same environment overrides. Generalized training,
+pretrained testing, and the SNR sweep request one A100 GPU, 16 CPUs, 240 GB of
+memory, and 24 hours by default. The per-file runner has smaller defaults tuned
+for one input at a time; see its embedded `#SBATCH` directives.
 
-```text
-1 A100 GPU, 16 CPUs, 240 GB memory, 24 hours
-```
-
-The generalized and per-file training jobs additionally request 200 GB of
-job-local `/lscratch`. Generalized training uses it for an ephemeral normalized
-training-data cache; per-file training uses it to concatenate split OME-TIFFs
-into one logical channel stack. Scratch data are recreated for every job and
+The generalized, per-file, and SNR jobs also request 200 GB of job-local
+`/lscratch`. Generalized training uses it for an ephemeral normalized training
+cache; per-file training uses it to concatenate split OME-TIFFs; and the SNR
+calibrator uses it through `TMPDIR` when compressed TIFFs must be decoded into
+temporary memory maps. Scratch data are recreated for every job and
 automatically deleted when that job exits; checkpoints, logs, CSVs, outputs,
 and source TIFFs remain on shared `/data`. With `--no-load-to-memory`, the
 generalized trainer attempts to memory-map TIFFs and skips its normalized-tensor
@@ -18,12 +17,66 @@ cache; TIFF layouts that cannot be memory-mapped may still require an in-memory
 fallback.
 
 Slurm resource overrides belong before the script path; SUPPORT runner options
-belong after it. All three batch entrypoints expect the repository in
+belong after it. All batch entrypoints expect the repository in
 `SLURM_SUBMIT_DIR` (normally submit from `/data/$USER/SUPPORT`), the conda
 initialization script at
 `/data/$USER/conda/etc/profile.d/conda.sh`, and an environment named `SUPPORT`.
 Set `SUPPORT_REPO_DIR`, `SUPPORT_CONDA_SH`, or `SUPPORT_CONDA_ENV` through
 `sbatch --export` when those defaults differ.
+
+## Staged SNR power sweeps
+
+`biowulf_snr_test.sbatch` runs `notebooks/snr_test.py`: it first creates one
+SUPPORT-denoised original for every source TIFF, independently recomputes one
+photon scale per successful raw/original pair, then simulates and denoises each
+requested power level. The default calibration window is `[60, T-60)`; at most
+50 adjacent frame pairs are distributed across that window, and edge frames are
+also excluded from the raw-to-SUPPORT scale fit. Input discovery is recursive,
+while the output root must be outside the input tree so generated TIFFs cannot
+enter a later scan.
+
+Power percentages mean measured two-photon excitation power at the specimen;
+photon-generating intensity, including out-of-focus fluorescence, is scaled by
+the square of that ratio. The independent Poisson model does not synthesize any
+measured scanner-correlated noise component.
+
+Submit from the repository root with persistent input and output locations on
+shared storage:
+
+```bash
+sbatch scripts/biowulf_snr_test.sbatch \
+  --input-directory /data/$USER/snr-input \
+  --output-directory /data/$USER/snr-output \
+  --dimensionality '3+1D' \
+  --power-percent 100 90 80 70 60 50 40
+```
+
+The default one-GPU allocation uses logical GPU 0 automatically. For multiple
+GPUs, increase the CPU allocation with the GPU count and choose a total memory
+request that fits an available node; `--n-cpu` is per selected GPU, and any
+values passed through `--gpus` are logical indices inside Slurm's inherited
+`CUDA_VISIBLE_DEVICES`:
+
+```bash
+sbatch --gres=gpu:a100:2,lscratch:300 \
+  --cpus-per-task=32 --mem=240g \
+  scripts/biowulf_snr_test.sbatch \
+  --input-directory /data/$USER/snr-input \
+  --output-directory /data/$USER/snr-output \
+  --dimensionality '3+1D' \
+  --n-cpu 8
+```
+
+Every source requires one original SUPPORT run plus one run per power level, so
+wall time can grow quickly. Automatic photon calibration requires repeated-time
+data and, with the default 60-frame trims, at least 124 frames (140 to meet the
+recommended ten-pair quality check). Static `3D` sweeps must pass a fixed
+`--photons-per-unit`. Compressed TIFF
+calibration can require temporary space for both the raw and denoised memory
+maps, so increase the combined GPU/`lscratch` request when necessary. Do not run
+overlapping jobs against the same output namespace: this workflow has no
+cross-job lock. Run `python notebooks/snr_test.py --help` for path, power,
+worker, GPU, and photon-calibration options.
 
 ## Per-file and per-channel 2DT training
 
