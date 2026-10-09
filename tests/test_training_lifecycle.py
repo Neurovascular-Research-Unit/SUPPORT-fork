@@ -236,7 +236,10 @@ class TrainingLifecycleTests(unittest.TestCase):
         ):
             trainer.train()
 
-        self.assertEqual(progress.postfixes[-1], {"L": 2.0, "L1": 2.0, "L2": 2.0})
+        self.assertEqual(
+            progress.postfixes[-1],
+            {"L": "2.0000", "L1": "2.0000", "L2": "2.0000"},
+        )
         self.assertTrue(math.isnan(batch_logs[-1]["L_mean"]))
         self.assertTrue(math.isnan(batch_logs[-1]["L1_mean"]))
         self.assertTrue(math.isnan(batch_logs[-1]["L2_mean"]))

@@ -1468,9 +1468,9 @@ class TrainingClass():
                 L2_mean, L2_nanmean = _mean_and_nanmean(lh_L2)
                 pbar.set_postfix(
                     {
-                        'L': L_nanmean,
-                        'L1': L1_nanmean,
-                        'L2': L2_nanmean,
+                        'L': f'{L_nanmean:.4f}',
+                        'L1': f'{L1_nanmean:.4f}',
+                        'L2': f'{L2_nanmean:.4f}',
                     }
                 )
                 batch = i + 1
