@@ -29,7 +29,10 @@ Set `SUPPORT_REPO_DIR`, `SUPPORT_CONDA_SH`, or `SUPPORT_CONDA_ENV` through
 `biowulf_snr_test.sbatch` runs `notebooks/snr_test.py`: it first creates one
 SUPPORT-denoised original for every source TIFF, independently recomputes one
 photon scale per successful raw/original pair, then simulates and denoises each
-requested power level. The default calibration window is `[60, T-60)`; at most
+requested power level. The recursively scanned input directory may contain any
+positive number of `.tif` or `.tiff` files; each is an independent source.
+Input stems must be unique across the tree because each stem defines its output
+namespace. The default calibration window is `[60, T-60)`; at most
 50 adjacent frame pairs are distributed across that window, and edge frames are
 also excluded from the raw-to-SUPPORT scale fit. Input discovery is recursive,
 while the output root must be outside the input tree so generated TIFFs cannot
@@ -83,9 +86,9 @@ worker, GPU, and photon-calibration options.
 `biowulf_singlefile.sbatch` recursively finds TIFFs whose full path contains
 `2DT` (case-insensitive), then trains and tests a separate, non-generalized
 model for each logical input. It reads normal-mode settings from
-`notebooks/parameters.json` and supports two strict layouts:
+`notebooks/parameters.json` and supports two layouts:
 
-- A directory containing exactly two ordinary `.tif` files. Each file gets its
+- A directory containing one or more ordinary `.tif` files. Each file gets its
   own model and the legacy `<input-stem>_SPRT.tif` output name.
 - Prairie View acquisitions named like
   `..._Cycle00001_Ch2_000001.ome.tif`. Chunks are sorted numerically by Cycle

@@ -2,9 +2,9 @@
 #SBATCH --job-name=support-snr-test
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:a100:1,lscratch:200
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=240g
-#SBATCH --time=1-00:00:00
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=164g
+#SBATCH --time=8:00:00
 #SBATCH --output=support-snr-test-%j.out
 
 set -euo pipefail

@@ -129,9 +129,13 @@ unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
 create a persistent denoised reference named `<stem>_original_SPRT.tif`. After
 all successful references are available, it simulates every configured power
 level from that denoised reference—not from the raw acquisition—and gives each
-simulated stack its own SUPPORT model. Configure `dir_noisy`, `dimensionality`,
-`power_percent`, and the other sweep settings near the top of the script, or
-override the paths and sweep settings with command-line options, then run:
+simulated stack its own SUPPORT model. The recursively scanned input directory
+may contain any positive number of `.tif` or `.tiff` files; every discovered
+TIFF becomes an independent source. Input stems must be unique across the tree
+because each stem defines its output namespace. Configure `dir_noisy`,
+`dimensionality`, `power_percent`, and the other sweep settings near the top of
+the script, or override the paths and sweep settings with command-line options,
+then run:
 
 ```bash
 python -u notebooks/snr_test.py

@@ -6,7 +6,7 @@ Two on-disk layouts are supported below one input root:
 * Prairie View OME-TIFF acquisitions split into temporal chunks and channels.
   Chunks are grouped and concatenated in job-local scratch by channel before a
   separate model is trained and tested for each channel.
-* Directories containing exactly two ordinary ``.tif`` files.  Each TIFF is
+* Directories containing one or more ordinary ``.tif`` files.  Each TIFF is
   trained and tested independently, matching the legacy ``run_batch.py`` flow.
 
 Only TIFFs whose full path contains the configured marker (``2DT`` by default)
@@ -267,9 +267,9 @@ def discover_work_items(
     """Discover both supported layouts and return independent logical jobs.
 
     Scenario-1 chunks are grouped by direct parent, acquisition prefix, and
-    channel, then sorted numerically by ``(Cycle, part)``.  Scenario-2 is
-    intentionally strict: its directory must contain exactly two direct-child
-    ordinary ``.tif`` files and no OME chunks.
+    channel, then sorted numerically by ``(Cycle, part)``.  In Scenario-2,
+    every direct-child ordinary ``.tif`` file becomes an independent job; the
+    directory must not contain OME chunks.
     """
     input_root = Path(input_root).expanduser().resolve(strict=True)
     output_directory = Path(output_directory).expanduser().resolve(strict=False)
@@ -373,7 +373,7 @@ def discover_work_items(
             continue
 
         # A filename ending in .ome.tif but not matching the acquisition grammar
-        # is not an ordinary two-file dataset.  Reject it instead of silently
+        # is not an ordinary per-file dataset.  Reject it instead of silently
         # training on a mislabeled or incomplete channel collection.
         malformed_ome = [
             path for path in paths if path.name.casefold().endswith((".ome.tif", ".ome.tiff"))
@@ -384,10 +384,13 @@ def discover_work_items(
                 f"ChN, and temporal-index tokens in {parent}: "
                 + ", ".join(path.name for path in malformed_ome)
             )
-        if len(paths) != 2 or any(path.suffix.casefold() != ".tif" for path in paths):
+        if any(path.suffix.casefold() != ".tif" for path in paths):
+            unsupported = ", ".join(
+                path.name for path in paths if path.suffix.casefold() != ".tif"
+            )
             raise SingleFileConfigurationError(
-                "an ordinary 2DT dataset directory must contain exactly two "
-                f"direct-child .tif files; found {len(paths)} eligible TIFF(s) in {parent}"
+                "ordinary 2DT inputs must use the .tif suffix in "
+                f"{parent}; unsupported: {unsupported}"
             )
         for path in paths:
             work_items.append(

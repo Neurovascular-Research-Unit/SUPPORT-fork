@@ -113,28 +113,38 @@ class BiowulfSingleFileDiscoveryTests(unittest.TestCase):
                     all(path.parent == dataset.resolve() for path in item.source_paths)
                 )
 
-    def test_two_plain_tiffs_are_independent_single_file_work_items(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            input_root = root / "data_noisy"
-            output_directory = root / "clean"
-            dataset = input_root / "animal" / "session_2DT-004"
-            first = self._write_tiff(dataset / "already_named_Ch2.tif", value=2)
-            second = self._write_tiff(dataset / "already_named_Ch3.tif", value=3)
-            output_directory.mkdir()
+    def test_any_positive_plain_tiff_count_creates_independent_work_items(self) -> None:
+        for file_count in (1, 2, 3):
+            with self.subTest(file_count=file_count):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    input_root = root / "data_noisy"
+                    output_directory = root / "clean"
+                    dataset = input_root / "animal" / "session_2DT-004"
+                    sources = {
+                        self._write_tiff(
+                            dataset / f"already_named_Ch{index}.tif", value=index
+                        ).resolve()
+                        for index in range(1, file_count + 1)
+                    }
+                    output_directory.mkdir()
 
-            items = discover_work_items(input_root, output_directory)
+                    items = discover_work_items(input_root, output_directory)
 
-            self.assertEqual(len(items), 2)
-            by_source = {item.source_paths[0]: item for item in items}
-            self.assertEqual(set(by_source), {first.resolve(), second.resolve()})
-            self.assertEqual(
-                {item.output_stem for item in items},
-                {"already_named_Ch2", "already_named_Ch3"},
-            )
-            for item in items:
-                self.assertEqual(len(item.source_paths), 1)
-                self.assertIn("single", str(item.scenario).casefold())
+                    self.assertEqual(len(items), file_count)
+                    self.assertEqual(
+                        {item.source_paths[0] for item in items}, sources
+                    )
+                    self.assertEqual(
+                        {item.output_stem for item in items},
+                        {
+                            f"already_named_Ch{index}"
+                            for index in range(1, file_count + 1)
+                        },
+                    )
+                    for item in items:
+                        self.assertEqual(len(item.source_paths), 1)
+                        self.assertIn("single", str(item.scenario).casefold())
 
     def test_marker_may_appear_only_in_a_parent_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -183,13 +193,8 @@ class BiowulfSingleFileDiscoveryTests(unittest.TestCase):
                     [1, 2, 10],
                 )
 
-    def test_ambiguous_or_malformed_dataset_layouts_are_rejected(self) -> None:
+    def test_mixed_or_malformed_dataset_layouts_are_rejected(self) -> None:
         cases = {
-            "one plain TIFF": ("scan_2DT", ["only.tif"]),
-            "three plain TIFFs": (
-                "scan_2DT",
-                ["first.tif", "second.tif", "third.tif"],
-            ),
             "mixed plain and OME TIFFs": (
                 "scan_2DT",
                 [

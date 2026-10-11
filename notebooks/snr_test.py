@@ -1370,6 +1370,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not parameters_path.is_file():
         raise FileNotFoundError(f"Parameter file does not exist: {parameters_path}")
 
+    # Every discovered TIFF is an independent SNR source.  Do not impose a
+    # per-directory file-count or channel-count requirement here.
     paths_noisy = sorted(
         path.resolve()
         for path in input_root.rglob("*")

@@ -165,7 +165,7 @@ class DeviceSelectionTests(unittest.TestCase):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             SNR.build_parser().parse_args(["--power-percent", "0"])
 
-    def test_main_uses_cluster_path_and_sweep_overrides(self) -> None:
+    def test_main_uses_every_input_tiff_and_sweep_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository = root / "SUPPORT"
@@ -174,12 +174,27 @@ class DeviceSelectionTests(unittest.TestCase):
             parameters_path = root / "parameters.json"
             (repository / "notebooks").mkdir(parents=True)
             input_root.mkdir()
-            (input_root / "movie.tif").write_bytes(b"placeholder")
+            for filename in ("movie_3.tif", "movie_1.tif", "movie_2.tiff"):
+                (input_root / filename).write_bytes(b"placeholder")
+            (input_root / "ignored.txt").write_bytes(b"not a TIFF")
             parameters_path.write_text("{}", encoding="utf-8")
 
             def run_staged(original_tasks, power_tasks, selected_gpus, configuration):
-                self.assertEqual(len(original_tasks), 1)
-                self.assertEqual([task.power for task in power_tasks], [100, 50])
+                self.assertEqual(
+                    [task.source.name for task in original_tasks],
+                    ["movie_1.tif", "movie_2.tiff", "movie_3.tif"],
+                )
+                self.assertEqual(
+                    [(task.source.name, task.power) for task in power_tasks],
+                    [
+                        ("movie_1.tif", 100),
+                        ("movie_1.tif", 50),
+                        ("movie_2.tiff", 100),
+                        ("movie_2.tiff", 50),
+                        ("movie_3.tif", 100),
+                        ("movie_3.tif", 50),
+                    ],
+                )
                 self.assertEqual(selected_gpus, ((0, "GPU-a"),))
                 self.assertEqual(configuration.repository, repository.resolve())
                 self.assertEqual(configuration.input_root, input_root.resolve())
