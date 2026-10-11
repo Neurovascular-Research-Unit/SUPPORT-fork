@@ -79,7 +79,9 @@ calibration can require temporary space for both the raw and denoised memory
 maps, so increase the combined GPU/`lscratch` request when necessary. Do not run
 overlapping jobs against the same output namespace: this workflow has no
 cross-job lock. Run `python notebooks/snr_test.py --help` for path, power,
-worker, GPU, and photon-calibration options.
+worker, GPU, and photon-calibration options. Use `--no-train-pin-memory` and/or
+`--no-test-pin-memory` to disable pinned host memory independently for the two
+DataLoaders.
 
 ## Per-file and per-channel 2DT training
 

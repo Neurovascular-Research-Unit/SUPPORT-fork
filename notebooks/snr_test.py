@@ -94,6 +94,8 @@ class SweepConfiguration:
     allow_provisional_photon_estimate: bool = False
     photon_zero_level: float = 0.0
     use_estimated_photon_pedestal: bool = False
+    train_pin_memory: Optional[bool] = None
+    test_pin_memory: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +225,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=positive_int,
         help="DataLoader workers per selected GPU (default: n_cpu in this file)",
     )
+    parser.add_argument(
+        "--no-train-pin-memory",
+        dest="train_pin_memory",
+        action="store_false",
+        help="disable pinned host memory for training DataLoader batches",
+    )
+    parser.add_argument(
+        "--no-test-pin-memory",
+        dest="test_pin_memory",
+        action="store_false",
+        help="disable pinned host memory for inference DataLoader batches",
+    )
+    parser.set_defaults(train_pin_memory=None, test_pin_memory=None)
     parser.add_argument(
         "--gpus",
         type=nonnegative_int,
@@ -695,6 +710,8 @@ def _run_support(
             "rm_intermediaries": configuration.rm_intermediaries,
         }
     )
+    if configuration.train_pin_memory is not None:
+        train_params["pin_memory"] = configuration.train_pin_memory
 
     trainer = None
     try:
@@ -715,6 +732,9 @@ def _run_support(
             finally:
                 del trainer
 
+    test_pin_memory = test_params.get("pin_memory", True)
+    if configuration.test_pin_memory is not None:
+        test_pin_memory = configuration.test_pin_memory
     test_dict = {
         "in_path": str(input_path),
         "model_path": model_path,
@@ -726,7 +746,7 @@ def _run_support(
         "patch_size": train_params["patch_size"],
         "patch_interval": test_params["patch_interval"],
         "batch_size": test_params["batch_size"],
-        "pin_memory": test_params.get("pin_memory", True),
+        "pin_memory": test_pin_memory,
         "depth": train_params["depth"],
         "bc_channels": train_params["bc_channels"],
         "obo_channels": train_params["obo_channels"],
@@ -1425,6 +1445,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         checkpoints=checkpoints,
         resume=resume,
         rm_intermediaries=rm_intermediaries,
+        train_pin_memory=args.train_pin_memory,
+        test_pin_memory=args.test_pin_memory,
         photons_per_unit=configured_photons_per_unit,
         photon_estimator_frame_start=(
             args.photon_frame_start

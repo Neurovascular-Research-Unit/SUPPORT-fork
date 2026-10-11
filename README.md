@@ -156,6 +156,9 @@ The batch job requests one A100, 16 CPUs, 240 GB RAM, 200 GB local scratch, and
 runner options go after it. See `scripts/README.md` for multi-GPU sizing and
 scratch guidance.
 
+Pass `--no-train-pin-memory` and/or `--no-test-pin-memory` to disable pinned
+host memory independently for the training and inference DataLoaders.
+
 With `photons_per_unit = None` (the default), the stage barrier independently
 recomputes a photon-transfer calibration for every successful discovered
 raw/original-SUPPORT pair on every invocation.

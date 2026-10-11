@@ -134,6 +134,8 @@ class DeviceSelectionTests(unittest.TestCase):
                 "50",
                 "--n-cpu",
                 "6",
+                "--no-train-pin-memory",
+                "--no-test-pin-memory",
             ]
         )
         self.assertEqual(args.gpus, [2, 0])
@@ -149,7 +151,12 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(args.dimensionality, "3+1D")
         self.assertEqual(args.power_percent, [100, 50])
         self.assertEqual(args.n_cpu, 6)
+        self.assertIs(args.train_pin_memory, False)
+        self.assertIs(args.test_pin_memory, False)
         self.assertFalse(args.use_estimated_photon_pedestal)
+        default_args = SNR.build_parser().parse_args([])
+        self.assertIsNone(default_args.train_pin_memory)
+        self.assertIsNone(default_args.test_pin_memory)
         estimated_args = SNR.build_parser().parse_args(
             ["--use-estimated-photon-pedestal"]
         )
@@ -202,6 +209,8 @@ class DeviceSelectionTests(unittest.TestCase):
                 self.assertEqual(configuration.parameters_path, parameters_path.resolve())
                 self.assertEqual(configuration.dimensionality, "2+1D")
                 self.assertEqual(configuration.n_cpu, 3)
+                self.assertIs(configuration.train_pin_memory, False)
+                self.assertIs(configuration.test_pin_memory, False)
                 self.assertEqual(configuration.photons_per_unit, 0.01)
                 self.assertEqual(configuration.photon_estimator_frame_start, 60)
                 self.assertEqual(
@@ -243,6 +252,8 @@ class DeviceSelectionTests(unittest.TestCase):
                 "60",
                 "--photon-frame-end-margin",
                 "60",
+                "--no-train-pin-memory",
+                "--no-test-pin-memory",
             ]
             with (
                 mock.patch.object(
@@ -1172,17 +1183,25 @@ class RunTaskCleanupTests(unittest.TestCase):
                     "bs_size": [3, 3],
                     "bp": False,
                     "rnd_seed": 17,
+                    "pin_memory": True,
                 },
                 "test": {
                     "patch_interval": [1, 4, 4],
                     "batch_size": 2,
                     "prefetch_factor": 1,
                     "pad": True,
+                    "pin_memory": True,
                 },
             }
         }
 
-    def _run_case(self, failure_stage=None):
+    def _run_case(
+        self,
+        failure_stage=None,
+        *,
+        train_pin_memory=None,
+        test_pin_memory=None,
+    ):
         temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
         root = Path(temporary_directory.name)
@@ -1210,6 +1229,8 @@ class RunTaskCleanupTests(unittest.TestCase):
             resume=True,
             rm_intermediaries=True,
             photons_per_unit=0.01,
+            train_pin_memory=train_pin_memory,
+            test_pin_memory=test_pin_memory,
         )
         events = []
 
@@ -1314,6 +1335,37 @@ class RunTaskCleanupTests(unittest.TestCase):
         )
         self.assertEqual(trainer_parameters["cuda_device"], "0")
         self.assertEqual(tester_parameters["cuda_device"], "0")
+        self.assertIs(trainer_parameters["pin_memory"], True)
+        self.assertIs(tester_parameters["pin_memory"], True)
+
+    def test_run_task_applies_pin_memory_overrides_independently(self) -> None:
+        cases = (
+            (False, None, False, True),
+            (None, False, True, False),
+            (False, False, False, False),
+        )
+        for train_override, test_override, expected_train, expected_test in cases:
+            with self.subTest(
+                train_pin_memory=train_override,
+                test_pin_memory=test_override,
+            ):
+                _, events, _, error = self._run_case(
+                    train_pin_memory=train_override,
+                    test_pin_memory=test_override,
+                )
+                self.assertIsNone(error)
+                trainer_parameters = next(
+                    event[1]
+                    for event in events
+                    if isinstance(event, tuple) and event[0] == "trainer_init"
+                )
+                tester_parameters = next(
+                    event[1]
+                    for event in events
+                    if isinstance(event, tuple) and event[0] == "tester_init"
+                )
+                self.assertIs(trainer_parameters["pin_memory"], expected_train)
+                self.assertIs(tester_parameters["pin_memory"], expected_test)
 
     def test_run_task_keeps_simulated_input_and_releases_trainer_on_train_failure(self) -> None:
         task, events, _, error = self._run_case(failure_stage="training")
