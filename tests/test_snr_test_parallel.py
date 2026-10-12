@@ -136,6 +136,8 @@ class DeviceSelectionTests(unittest.TestCase):
                 "6",
                 "--no-train-pin-memory",
                 "--no-test-pin-memory",
+                "--slack-webhook-file",
+                "/data/user/.secrets/support-slack-webhook",
             ]
         )
         self.assertEqual(args.gpus, [2, 0])
@@ -153,10 +155,15 @@ class DeviceSelectionTests(unittest.TestCase):
         self.assertEqual(args.n_cpu, 6)
         self.assertIs(args.train_pin_memory, False)
         self.assertIs(args.test_pin_memory, False)
+        self.assertEqual(
+            args.slack_webhook_file,
+            Path("/data/user/.secrets/support-slack-webhook"),
+        )
         self.assertFalse(args.use_estimated_photon_pedestal)
         default_args = SNR.build_parser().parse_args([])
         self.assertIsNone(default_args.train_pin_memory)
         self.assertIsNone(default_args.test_pin_memory)
+        self.assertIsNone(default_args.slack_webhook_file)
         estimated_args = SNR.build_parser().parse_args(
             ["--use-estimated-photon-pedestal"]
         )
@@ -179,12 +186,18 @@ class DeviceSelectionTests(unittest.TestCase):
             input_root = root / "input"
             output_root = root / "output"
             parameters_path = root / "parameters.json"
+            slack_webhook_file = root / "support-slack-webhook"
             (repository / "notebooks").mkdir(parents=True)
             input_root.mkdir()
             for filename in ("movie_3.tif", "movie_1.tif", "movie_2.tiff"):
                 (input_root / filename).write_bytes(b"placeholder")
             (input_root / "ignored.txt").write_bytes(b"not a TIFF")
             parameters_path.write_text("{}", encoding="utf-8")
+            slack_webhook_file.write_text(
+                "https://hooks.slack.com/services/T/B/X\n",
+                encoding="utf-8",
+            )
+            slack_webhook_file.chmod(0o600)
 
             def run_staged(original_tasks, power_tasks, selected_gpus, configuration):
                 self.assertEqual(
@@ -211,6 +224,10 @@ class DeviceSelectionTests(unittest.TestCase):
                 self.assertEqual(configuration.n_cpu, 3)
                 self.assertIs(configuration.train_pin_memory, False)
                 self.assertIs(configuration.test_pin_memory, False)
+                self.assertEqual(
+                    configuration.slack_webhook_file,
+                    slack_webhook_file.resolve(),
+                )
                 self.assertEqual(configuration.photons_per_unit, 0.01)
                 self.assertEqual(configuration.photon_estimator_frame_start, 60)
                 self.assertEqual(
@@ -254,6 +271,8 @@ class DeviceSelectionTests(unittest.TestCase):
                 "60",
                 "--no-train-pin-memory",
                 "--no-test-pin-memory",
+                "--slack-webhook-file",
+                str(slack_webhook_file),
             ]
             with (
                 mock.patch.object(
@@ -1201,6 +1220,7 @@ class RunTaskCleanupTests(unittest.TestCase):
         *,
         train_pin_memory=None,
         test_pin_memory=None,
+        slack_notifications=False,
     ):
         temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
@@ -1231,6 +1251,11 @@ class RunTaskCleanupTests(unittest.TestCase):
             photons_per_unit=0.01,
             train_pin_memory=train_pin_memory,
             test_pin_memory=test_pin_memory,
+            slack_webhook_file=(
+                root / "support-slack-webhook"
+                if slack_notifications
+                else None
+            ),
         )
         events = []
 
@@ -1241,14 +1266,25 @@ class RunTaskCleanupTests(unittest.TestCase):
                 self.out_dir = "/vf/users/results"
                 self.exp_name = task.exp_name
                 self.log = SimpleNamespace(log_params=lambda: events.append("log_params"))
+                self.epoch_start_callback = None
+                self.epoch_complete_callback = None
 
             def vars_dict(self):
                 events.append("vars_dict")
 
             def run(self):
                 events.append("trainer_run")
+                if self.epoch_start_callback is not None:
+                    self.epoch_start_callback(self, 0)
                 if failure_stage == "training":
                     raise RuntimeError("training failed")
+                if self.epoch_complete_callback is not None:
+                    metrics = {
+                        "loss_total": 1.0,
+                        "loss_l1": 0.5,
+                        "loss_l2": 0.5,
+                    }
+                    self.epoch_complete_callback(self, 0, metrics, None)
 
             def release_resources(self):
                 events.append("trainer_release")
@@ -1272,6 +1308,59 @@ class RunTaskCleanupTests(unittest.TestCase):
         testing_module.TestingClass = FakeTester
         training_module = types.ModuleType("utils.train_collection")
         training_module.TrainingClass = FakeTrainer
+
+        class FakeSlackNotifier:
+            def __init__(self, enabled):
+                self.enabled = enabled
+
+            @classmethod
+            def from_environment(cls, *, enabled, webhook_file=None, **kwargs):
+                events.append(("slack_factory", enabled, webhook_file))
+                return cls(enabled)
+
+            def notify_run_started(
+                self,
+                trainer,
+                *,
+                training_count=None,
+                validation_count=None,
+            ):
+                events.append(
+                    (
+                        "slack_started",
+                        trainer.exp_name,
+                        training_count,
+                        validation_count,
+                    )
+                )
+
+            def notify_epoch_started(self, trainer, epoch):
+                events.append(("slack_epoch_started", trainer.exp_name, epoch))
+
+            def notify_epoch_completed(
+                self,
+                trainer,
+                epoch,
+                training_metrics,
+                validation_metrics,
+            ):
+                events.append(("slack_epoch_completed", trainer.exp_name, epoch))
+
+            def notify_run_completed(self, trainer):
+                events.append(("slack_completed", trainer.exp_name))
+
+            def notify_failure(self, exc, *, trainer=None, stage="training"):
+                events.append(
+                    (
+                        "slack_failure",
+                        type(exc).__name__,
+                        stage,
+                        getattr(trainer, "exp_name", None),
+                    )
+                )
+
+        slack_module = types.ModuleType("utils.slack_notifications")
+        slack_module.SlackNotifier = FakeSlackNotifier
         fake_torch = SimpleNamespace(
             manual_seed=lambda seed: events.append(("seed", seed)),
             cuda=SimpleNamespace(empty_cache=lambda: events.append("empty_cache")),
@@ -1296,6 +1385,7 @@ class RunTaskCleanupTests(unittest.TestCase):
 
         stubs = {
             "utils.salt": salt_module,
+            "utils.slack_notifications": slack_module,
             "utils.test_collection": testing_module,
             "utils.train_collection": training_module,
         }
@@ -1366,6 +1456,36 @@ class RunTaskCleanupTests(unittest.TestCase):
                 )
                 self.assertIs(trainer_parameters["pin_memory"], expected_train)
                 self.assertIs(tester_parameters["pin_memory"], expected_test)
+
+    def test_run_task_sends_slack_lifecycle_for_each_model(self) -> None:
+        _, events, _, error = self._run_case(slack_notifications=True)
+
+        self.assertIsNone(error)
+        factory = next(event for event in events if event[0] == "slack_factory")
+        self.assertIs(factory[1], True)
+        self.assertEqual(factory[2].name, "support-slack-webhook")
+        self.assertIn(("slack_started", "source_050", 1, 0), events)
+        self.assertIn(("slack_epoch_started", "source_050", 0), events)
+        self.assertIn(("slack_epoch_completed", "source_050", 0), events)
+        self.assertIn(("slack_completed", "source_050"), events)
+        self.assertFalse(any(event[0] == "slack_failure" for event in events))
+        self.assertLess(
+            events.index("tester_release"),
+            events.index(("slack_completed", "source_050")),
+        )
+
+    def test_run_task_reports_inference_failure_to_slack(self) -> None:
+        _, events, _, error = self._run_case(
+            failure_stage="testing",
+            slack_notifications=True,
+        )
+
+        self.assertIn("testing failed", str(error))
+        self.assertIn(
+            ("slack_failure", "RuntimeError", "inference", "source_050"),
+            events,
+        )
+        self.assertFalse(any(event[0] == "slack_completed" for event in events))
 
     def test_run_task_keeps_simulated_input_and_releases_trainer_on_train_failure(self) -> None:
         task, events, _, error = self._run_case(failure_stage="training")

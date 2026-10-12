@@ -96,6 +96,7 @@ class SweepConfiguration:
     use_estimated_photon_pedestal: bool = False
     train_pin_memory: Optional[bool] = None
     test_pin_memory: Optional[bool] = None
+    slack_webhook_file: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +180,20 @@ def _ensure_repository_importable(repository: Path) -> None:
         sys.path.insert(0, repository_token)
 
 
+def _new_slack_notifier(repository: Path, webhook_file: Optional[Path]):
+    """Build one isolated notifier without exposing the webhook to parameters."""
+    _ensure_repository_importable(repository)
+    if __package__:
+        from ..utils.slack_notifications import SlackNotifier
+    else:
+        from utils.slack_notifications import SlackNotifier
+
+    return SlackNotifier.from_environment(
+        enabled=webhook_file is not None,
+        webhook_file=webhook_file,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -238,6 +253,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="disable pinned host memory for inference DataLoader batches",
     )
     parser.set_defaults(train_pin_memory=None, test_pin_memory=None)
+    parser.add_argument(
+        "--slack-webhook-file",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help=(
+            "private mode-0600 Slack Incoming Webhook file; enables start, "
+            "epoch, completion, and failure notifications for each model"
+        ),
+    )
     parser.add_argument(
         "--gpus",
         type=nonnegative_int,
@@ -713,64 +738,105 @@ def _run_support(
     if configuration.train_pin_memory is not None:
         train_params["pin_memory"] = configuration.train_pin_memory
 
+    # A new notifier per model keeps timing and loss history isolated when one
+    # GPU worker runs several original/power jobs in sequence.
+    slack_notifier = _new_slack_notifier(
+        configuration.repository,
+        configuration.slack_webhook_file,
+    )
+    failure_stage = "training initialization"
     trainer = None
-    try:
-        trainer = TrainingClass(train_params)
-        trainer.vars_dict()
-        trainer.log.log_params()
-        # TrainingClass currently seeds torch after model construction. Seed
-        # here too so GPU count/task assignment cannot change initial weights.
-        torch.manual_seed(int(train_params.get("rnd_seed", 0)))
-        trainer.run()
-        model_path = str(trainer.model_path).replace("/vf/users", "/data")
-        test_out_dir = str(trainer.out_dir).replace("/vf/users", "/data")
-        test_exp_name = trainer.exp_name
-    finally:
-        if trainer is not None:
-            try:
-                _release_job_resource(trainer, torch)
-            finally:
-                del trainer
-
-    test_pin_memory = test_params.get("pin_memory", True)
-    if configuration.test_pin_memory is not None:
-        test_pin_memory = configuration.test_pin_memory
-    test_dict = {
-        "in_path": str(input_path),
-        "model_path": model_path,
-        "exp_name": test_exp_name,
-        "out_dir": test_out_dir,
-        "output_path": str(output_path).replace("/vf/users", "/data"),
-        "dimensionality": train_params["dimensionality"],
-        "cuda_device": "0",
-        "patch_size": train_params["patch_size"],
-        "patch_interval": test_params["patch_interval"],
-        "batch_size": test_params["batch_size"],
-        "pin_memory": test_pin_memory,
-        "depth": train_params["depth"],
-        "bc_channels": train_params["bc_channels"],
-        "obo_channels": train_params["obo_channels"],
-        "ll_channels": train_params["ll_channels"],
-        "unet_channels": train_params["unet_channels"],
-        "bs_size": train_params["bs_size"],
-        "bp": train_params.get("bp", False),
-        "n_cpu": train_params["n_cpu"],
-        "prefetch_factor": test_params["prefetch_factor"],
-        "pad": test_params["pad"],
-    }
     tester = None
     try:
-        tester = TestingClass(test_dict)
-        tester.run()
-        output_path = Path(tester.out_path)
+        training_succeeded = False
+        try:
+            trainer = TrainingClass(train_params)
+            trainer.vars_dict()
+            trainer.log.log_params()
+            if slack_notifier.enabled:
+                trainer.epoch_start_callback = (
+                    slack_notifier.notify_epoch_started
+                )
+                trainer.epoch_complete_callback = (
+                    slack_notifier.notify_epoch_completed
+                )
+                slack_notifier.notify_run_started(
+                    trainer,
+                    training_count=1,
+                    validation_count=0,
+                )
+            # TrainingClass currently seeds torch after model construction.
+            # Seed here too so GPU assignment cannot change initial weights.
+            torch.manual_seed(int(train_params.get("rnd_seed", 0)))
+            failure_stage = "training"
+            trainer.run()
+            training_succeeded = True
+            model_path = str(trainer.model_path).replace("/vf/users", "/data")
+            test_out_dir = str(trainer.out_dir).replace("/vf/users", "/data")
+            test_exp_name = trainer.exp_name
+        finally:
+            if trainer is not None:
+                if training_succeeded:
+                    failure_stage = "training resource cleanup"
+                _release_job_resource(trainer, torch)
+
+        test_pin_memory = test_params.get("pin_memory", True)
+        if configuration.test_pin_memory is not None:
+            test_pin_memory = configuration.test_pin_memory
+        test_dict = {
+            "in_path": str(input_path),
+            "model_path": model_path,
+            "exp_name": test_exp_name,
+            "out_dir": test_out_dir,
+            "output_path": str(output_path).replace("/vf/users", "/data"),
+            "dimensionality": train_params["dimensionality"],
+            "cuda_device": "0",
+            "patch_size": train_params["patch_size"],
+            "patch_interval": test_params["patch_interval"],
+            "batch_size": test_params["batch_size"],
+            "pin_memory": test_pin_memory,
+            "depth": train_params["depth"],
+            "bc_channels": train_params["bc_channels"],
+            "obo_channels": train_params["obo_channels"],
+            "ll_channels": train_params["ll_channels"],
+            "unet_channels": train_params["unet_channels"],
+            "bs_size": train_params["bs_size"],
+            "bp": train_params.get("bp", False),
+            "n_cpu": train_params["n_cpu"],
+            "prefetch_factor": test_params["prefetch_factor"],
+            "pad": test_params["pad"],
+        }
+        failure_stage = "inference initialization"
+        inference_succeeded = False
+        try:
+            tester = TestingClass(test_dict)
+            failure_stage = "inference"
+            tester.run()
+            inference_succeeded = True
+            output_path = Path(tester.out_path)
+        finally:
+            if tester is not None:
+                if inference_succeeded:
+                    failure_stage = "inference resource cleanup"
+                _release_job_resource(tester, torch)
+
+        failure_stage = "completion notification"
+        if slack_notifier.enabled:
+            slack_notifier.notify_run_completed(trainer)
+        return output_path
+    except BaseException as exc:
+        if slack_notifier.enabled:
+            slack_notifier.notify_failure(
+                exc,
+                trainer=trainer,
+                stage=failure_stage,
+            )
+        raise
     finally:
         if tester is not None:
-            try:
-                _release_job_resource(tester, torch)
-            finally:
-                del tester
-
-    return output_path
+            del tester
+        if trainer is not None:
+            del trainer
 
 
 def _run_original_task(
@@ -1344,7 +1410,8 @@ def _discover_visible_devices() -> tuple[str, ...]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     repository = (
         args.repository if args.repository is not None else path_support
     ).expanduser().resolve()
@@ -1370,6 +1437,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     configured_n_cpu = args.n_cpu if args.n_cpu is not None else n_cpu
     if not repository.is_dir():
         raise NotADirectoryError(f"SUPPORT repository does not exist: {repository}")
+    configured_slack_webhook_file = None
+    if args.slack_webhook_file is not None:
+        candidate = args.slack_webhook_file.expanduser()
+        try:
+            # Validate permissions and contents before any GPU worker starts.
+            _new_slack_notifier(repository, candidate)
+        except ValueError as exc:
+            parser.error(str(exc))
+        configured_slack_webhook_file = candidate.resolve(strict=True)
     if not input_root.is_dir():
         raise NotADirectoryError(f"SNR input directory does not exist: {input_root}")
     try:
@@ -1447,6 +1523,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         rm_intermediaries=rm_intermediaries,
         train_pin_memory=args.train_pin_memory,
         test_pin_memory=args.test_pin_memory,
+        slack_webhook_file=configured_slack_webhook_file,
         photons_per_unit=configured_photons_per_unit,
         photon_estimator_frame_start=(
             args.photon_frame_start
@@ -1493,6 +1570,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(
         f"DataLoader workers: {configured_n_cpu} per GPU, up to "
         f"{configured_n_cpu * len(selected_gpus)} total."
+    )
+    print(
+        "Slack notifications: "
+        + (
+            "enabled for each independent SUPPORT model"
+            if configuration.slack_webhook_file is not None
+            else "disabled"
+        )
     )
     if configuration.photons_per_unit is None:
         print(

@@ -148,7 +148,8 @@ sbatch scripts/biowulf_snr_test.sbatch \
   --input-directory /data/$USER/snr-input \
   --output-directory /data/$USER/snr-output \
   --dimensionality '3+1D' \
-  --power-percent 100 90 80 70 60 50 40
+  --power-percent 100 90 80 70 60 50 40 \
+  --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
 ```
 
 The batch job requests one A100, 16 CPUs, 240 GB RAM, 200 GB local scratch, and
@@ -158,6 +159,8 @@ scratch guidance.
 
 Pass `--no-train-pin-memory` and/or `--no-test-pin-memory` to disable pinned
 host memory independently for the training and inference DataLoaders.
+The optional private mode-0600 `--slack-webhook-file` enables start, per-epoch,
+completion, and failure messages for every independent original/power model.
 
 With `photons_per_unit = None` (the default), the stage barrier independently
 recomputes a photon-transfer calibration for every successful discovered

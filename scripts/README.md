@@ -51,7 +51,8 @@ sbatch scripts/biowulf_snr_test.sbatch \
   --input-directory /data/$USER/snr-input \
   --output-directory /data/$USER/snr-output \
   --dimensionality '3+1D' \
-  --power-percent 100 90 80 70 60 50 40
+  --power-percent 100 90 80 70 60 50 40 \
+  --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
 ```
 
 The default one-GPU allocation uses logical GPU 0 automatically. For multiple
@@ -81,7 +82,9 @@ overlapping jobs against the same output namespace: this workflow has no
 cross-job lock. Run `python notebooks/snr_test.py --help` for path, power,
 worker, GPU, and photon-calibration options. Use `--no-train-pin-memory` and/or
 `--no-test-pin-memory` to disable pinned host memory independently for the two
-DataLoaders.
+DataLoaders. A private mode-0600 `--slack-webhook-file` enables start,
+per-epoch, completion, and failure messages for each independent original or
+power model; see the Slack setup below.
 
 ## Per-file and per-channel 2DT training
 
