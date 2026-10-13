@@ -1,9 +1,10 @@
 # Biowulf SUPPORT training and denoising
 
-The batch entrypoints use the same environment overrides. Generalized training,
-pretrained testing, and the SNR sweep request one A100 GPU, 16 CPUs, 240 GB of
-memory, and 24 hours by default. The per-file runner has smaller defaults tuned
-for one input at a time; see its embedded `#SBATCH` directives.
+The batch entrypoints use the same environment overrides. Generalized training
+and pretrained testing request one A100 GPU, 16 CPUs, 240 GB of memory, and
+24 hours by default. The SNR sweep requests one A100 GPU, 6 CPUs, 164 GB of
+memory, and 8 hours. The per-file runner has smaller defaults tuned for one
+input at a time; see each script's embedded `#SBATCH` directives.
 
 The generalized, per-file, and SNR jobs also request 200 GB of job-local
 `/lscratch`. Generalized training uses it for an ephemeral normalized training
@@ -24,13 +25,13 @@ initialization script at
 Set `SUPPORT_REPO_DIR`, `SUPPORT_CONDA_SH`, or `SUPPORT_CONDA_ENV` through
 `sbatch --export` when those defaults differ.
 
-## Staged SNR power sweeps
+## Cooperative SNR power sweeps
 
-`biowulf_snr_test.sbatch` runs `notebooks/snr_test.py`: it first creates one
-SUPPORT-denoised original for every source TIFF, independently recomputes one
-photon scale per successful raw/original pair, then simulates and denoises each
-requested power level. The recursively scanned input directory may contain any
-positive number of `.tif` or `.tiff` files; each is an independent source.
+`biowulf_snr_test.sbatch` runs `notebooks/snr_test.py`. For each source TIFF it
+creates one SUPPORT-denoised original, calibrates that successful raw/original
+pair as needed, then simulates and denoises the requested power levels. The
+recursively scanned input directory may contain any positive number of `.tif`
+or `.tiff` files; each is an independent source.
 Input stems must be unique across the tree because each stem defines its output
 namespace. The default calibration window is `[60, T-60)`; at most
 50 adjacent frame pairs are distributed across that window, and edge frames are
@@ -55,6 +56,40 @@ sbatch scripts/biowulf_snr_test.sbatch \
   --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
 ```
 
+Two independent one-GPU submissions can cooperate on the same sweep. Submit
+the exact command above twice, or launch two concurrent array tasks with the
+same runner arguments:
+
+```bash
+sbatch --array=0-1%2 scripts/biowulf_snr_test.sbatch \
+  --input-directory /data/$USER/snr-input \
+  --output-directory /data/$USER/snr-output \
+  --dimensionality '3+1D' \
+  --power-percent 100 90 80 70 60 50 40 \
+  --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
+```
+
+Each submission remains a separate one-A100 job with 6 CPUs, 164 GB RAM, and
+200 GB local scratch; it does not turn one model into distributed training.
+Every cooperating submission must use the same resolved input and output
+directories and identical model, simulation, calibration, and ordered power
+arguments.
+
+Workers scan the shared work in source-first order. If an original has not yet
+been denoised and another worker holds its lock, the waiting worker advances to
+the next raw TIFF. Once an original is complete, workers can claim different
+power experiments for that same source before moving on. Active lock contention
+is reported as deferred, is not a model failure, and does not make an otherwise
+successful batch exit nonzero.
+
+Valid existing `_SPRT.tif` results are checked and adopted, including outputs
+created before cooperative scheduling was added. An unfinished experiment
+directory retains its checkpoints and resumes under its lock, so resubmitting
+the same command continues the sweep. Each logical experiment has a persistent
+`.snr_job.lock` sidecar. An unlocked sidecar left after a job exits is normal;
+never delete, rename, or replace one while any related worker may still be
+running, because the replacement would create a separate lock inode.
+
 The default one-GPU allocation uses logical GPU 0 automatically. For multiple
 GPUs, increase the CPU allocation with the GPU count and choose a total memory
 request that fits an available node; `--n-cpu` is per selected GPU, and any
@@ -77,14 +112,14 @@ data and, with the default 60-frame trims, at least 124 frames (140 to meet the
 recommended ten-pair quality check). Static `3D` sweeps must pass a fixed
 `--photons-per-unit`. Compressed TIFF
 calibration can require temporary space for both the raw and denoised memory
-maps, so increase the combined GPU/`lscratch` request when necessary. Do not run
-overlapping jobs against the same output namespace: this workflow has no
-cross-job lock. Run `python notebooks/snr_test.py --help` for path, power,
-worker, GPU, and photon-calibration options. Use `--no-train-pin-memory` and/or
-`--no-test-pin-memory` to disable pinned host memory independently for the two
-DataLoaders. A private mode-0600 `--slack-webhook-file` enables start,
-per-epoch, completion, and failure messages for each independent original or
-power model; see the Slack setup below.
+maps, so increase the combined GPU/`lscratch` request when necessary. Run
+`python notebooks/snr_test.py --help` for path, power, worker, GPU, and
+photon-calibration options. The batch wrapper passes
+`--no-train-pin-memory`, `--no-test-pin-memory`, and
+`--slack-webhook-file /data/garfinkeljb/.secrets/support-slack-webhook` by
+default. A trailing `--slack-webhook-file` argument overrides that path. Direct
+Python runs can set these options independently; the webhook file must remain a
+private mode-0600 file. See the Slack setup below.
 
 ## Per-file and per-channel 2DT training
 

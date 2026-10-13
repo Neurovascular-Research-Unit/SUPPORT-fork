@@ -37,7 +37,41 @@ def load_snr_test_module():
 SNR = load_snr_test_module()
 
 
+def write_float32_tiff(
+    path: Path,
+    values: np.ndarray | None = None,
+    *,
+    shape: tuple[int, ...] = (2, 3, 4),
+) -> np.ndarray:
+    """Write a small, fully decodable TIFF accepted by restart validation."""
+    if values is None:
+        values = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    else:
+        values = np.asarray(values, dtype=np.float32)
+    axes = {2: "YX", 3: "TYX", 4: "TZYX"}[values.ndim]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    SNR.tifffile.imwrite(path, values, imagej=True, metadata={"axes": axes})
+    return values
+
+
 class DeviceSelectionTests(unittest.TestCase):
+    def test_biowulf_wrapper_supplies_requested_runtime_defaults(self) -> None:
+        script_path = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "biowulf_snr_test.sbatch"
+        )
+        script = script_path.read_text(encoding="utf-8")
+
+        self.assertIn('--n-cpu "${SLURM_CPUS_PER_TASK}"', script)
+        self.assertIn("--no-train-pin-memory", script)
+        self.assertIn("--no-test-pin-memory", script)
+        self.assertIn(
+            "--slack-webhook-file "
+            "/data/garfinkeljb/.secrets/support-slack-webhook",
+            script,
+        )
+
     def test_repository_root_is_added_for_direct_script_imports(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             repository = Path(temporary_directory).resolve()
@@ -235,12 +269,13 @@ class DeviceSelectionTests(unittest.TestCase):
                 )
                 return tuple(
                     SNR.TaskResult(
-                        task.index,
-                        0,
-                        task.source,
-                        task.power,
-                        True,
-                        output_root / f"clean-{task.index}.tif",
+                        task_index=task.index,
+                        gpu_slot=0,
+                        source=task.source,
+                        power=task.power,
+                        success=False,
+                        error="owned by another submission",
+                        deferred=True,
                     )
                     for task in power_tasks
                 )
@@ -274,6 +309,7 @@ class DeviceSelectionTests(unittest.TestCase):
                 "--slack-webhook-file",
                 str(slack_webhook_file),
             ]
+            stdout = io.StringIO()
             with (
                 mock.patch.object(
                     SNR, "_discover_visible_devices", return_value=("GPU-a",)
@@ -281,11 +317,12 @@ class DeviceSelectionTests(unittest.TestCase):
                 mock.patch.object(
                     SNR, "run_staged_sweep", side_effect=run_staged
                 ) as staged,
-                redirect_stdout(io.StringIO()),
+                redirect_stdout(stdout),
             ):
                 exit_code = SNR.main(arguments)
 
             self.assertEqual(exit_code, 0)
+            self.assertIn("6 deferred to another submission", stdout.getvalue())
             staged.assert_called_once()
 
 
@@ -614,6 +651,44 @@ class WorkerBehaviorTests(unittest.TestCase):
             self.assertEqual([result.success for result in queue.items], [False, True])
             self.assertIn("job failed", queue.items[0].error)
 
+    def test_gpu_worker_defers_busy_task_and_continues_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            tasks = self._tasks(root)
+            queue = RecordingQueue()
+            fake_torch = SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_available=lambda: True,
+                    device_count=lambda: 1,
+                    set_device=lambda device: None,
+                    get_device_name=lambda device: "Fake GPU",
+                )
+            )
+
+            def run_task(task, *args):
+                if task.index == 0:
+                    raise SNR.TaskBusyError("owned by another submission")
+                return root / "clean.tif"
+
+            with (
+                mock.patch.dict(sys.modules, {"torch": fake_torch}),
+                mock.patch.object(SNR, "_run_task", side_effect=run_task) as runner,
+                redirect_stdout(io.StringIO()),
+            ):
+                SNR._gpu_worker(
+                    0,
+                    "0",
+                    tasks,
+                    self._configuration(root),
+                    queue,
+                )
+
+            self.assertEqual(runner.call_count, 2)
+            self.assertEqual([result.success for result in queue.items], [False, True])
+            self.assertTrue(queue.items[0].deferred)
+            self.assertFalse(queue.items[1].deferred)
+            self.assertIn("another submission", queue.items[0].error)
+
     def test_gpu_worker_stops_lane_after_cleanup_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -653,31 +728,60 @@ class WorkerBehaviorTests(unittest.TestCase):
             self.assertTrue(all("was not started" in result.error for result in queue.items[1:]))
 
 
+class CrossSubmissionLockTests(unittest.TestCase):
+    def test_lock_is_nonblocking_persistent_and_reusable_after_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            experiment_directory = Path(temporary_directory) / "experiment"
+
+            with SNR._exclusive_snr_job_lock(experiment_directory) as lock_path:
+                self.assertTrue(lock_path.is_file())
+                self.assertEqual(lock_path.name, SNR.SNR_JOB_LOCK_NAME)
+                with self.assertRaisesRegex(
+                    SNR.TaskBusyError, "another submission owns"
+                ):
+                    with SNR._exclusive_snr_job_lock(experiment_directory):
+                        self.fail("a held lock must never be acquired")
+
+            self.assertTrue(lock_path.is_file())
+            with SNR._exclusive_snr_job_lock(experiment_directory) as reacquired:
+                self.assertEqual(reacquired, lock_path)
+
+
 class StagedWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def _original_task(root: Path) -> object:
+        return SNR.OriginalTask(
+            index=0,
+            source=root / "raw.tif",
+            exp_name="raw_original",
+            out_dir=root / "outputs" / "raw",
+            output_path=(
+                root
+                / "outputs"
+                / "raw"
+                / "raw_original"
+                / "raw_original_SPRT.tif"
+            ),
+        )
+
     def test_original_job_runs_support_directly_on_raw_and_keeps_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             configuration = WorkerBehaviorTests._configuration(root)
-            task = SNR.OriginalTask(
-                index=0,
-                source=root / "raw.tif",
-                exp_name="raw_original",
-                out_dir=root / "outputs" / "raw",
-                output_path=(
-                    root
-                    / "outputs"
-                    / "raw"
-                    / "raw_original"
-                    / "raw_original_SPRT.tif"
-                ),
-            )
+            task = self._original_task(root)
+            raw = write_float32_tiff(task.source)
             fake_torch = object()
+
+            def publish_support(**kwargs):
+                self.assertEqual(kwargs["input_path"], task.source)
+                write_float32_tiff(task.output_path, raw + 1)
+                return task.output_path
 
             with (
                 mock.patch.object(
                     SNR,
                     "_run_support",
-                    return_value=task.output_path,
+                    side_effect=publish_support,
                 ) as run_support,
                 mock.patch.object(SNR, "_write_simulated_tiff") as writer,
             ):
@@ -698,6 +802,91 @@ class StagedWorkflowTests(unittest.TestCase):
                 configuration=configuration,
                 torch=fake_torch,
             )
+
+    def test_original_job_adopts_valid_existing_output_before_locking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            task = self._original_task(root)
+            raw = write_float32_tiff(task.source)
+            write_float32_tiff(task.output_path, raw + 1)
+
+            with (
+                mock.patch.object(SNR, "_run_support") as run_support,
+                mock.patch.object(SNR, "_exclusive_snr_job_lock") as lock,
+                redirect_stdout(io.StringIO()),
+            ):
+                result = SNR._run_original_task(
+                    task,
+                    WorkerBehaviorTests._configuration(root),
+                    object(),
+                    gpu_slot=0,
+                )
+
+            self.assertEqual(result, task.output_path)
+            run_support.assert_not_called()
+            lock.assert_not_called()
+
+    def test_original_job_reports_busy_lock_without_starting_support(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            task = self._original_task(root)
+            write_float32_tiff(task.source)
+
+            with (
+                SNR._exclusive_snr_job_lock(task.output_path.parent),
+                mock.patch.object(SNR, "_run_support") as run_support,
+                redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(SNR.TaskBusyError, "another submission owns"),
+            ):
+                SNR._run_original_task(
+                    task,
+                    WorkerBehaviorTests._configuration(root),
+                    object(),
+                    gpu_slot=0,
+                )
+
+            run_support.assert_not_called()
+
+    def test_power_job_adopts_completed_output_before_expensive_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            task = SNR.SweepTask(
+                index=0,
+                source=root / "raw.tif",
+                reference_path=root / "missing-original.tif",
+                power=40,
+                exp_name="raw_original_040",
+                out_dir=root / "outputs" / "raw",
+                simulated_path=(
+                    root
+                    / "outputs"
+                    / "raw"
+                    / "raw_original_040"
+                    / "raw_original_040.tif"
+                ),
+            )
+            raw = write_float32_tiff(task.source)
+            output_path = SNR._power_output_path(task)
+            write_float32_tiff(output_path, raw + 2)
+            configuration = SNR.replace(
+                WorkerBehaviorTests._configuration(root),
+                photons_per_unit=None,
+            )
+
+            with (
+                mock.patch.object(SNR, "_run_support") as run_support,
+                mock.patch.object(SNR, "_write_simulated_tiff") as writer,
+                mock.patch.object(SNR, "_ensure_repository_importable") as importer,
+                mock.patch.object(SNR, "_exclusive_snr_job_lock") as lock,
+                redirect_stdout(io.StringIO()),
+            ):
+                result = SNR._run_task(task, configuration, object(), gpu_slot=1)
+
+            self.assertEqual(result, output_path)
+            run_support.assert_not_called()
+            writer.assert_not_called()
+            importer.assert_not_called()
+            lock.assert_not_called()
 
     def test_power_job_simulates_from_reference_never_raw_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -720,20 +909,11 @@ class StagedWorkflowTests(unittest.TestCase):
                 photons_per_unit=0.0037,
                 zero_photon_level=-12.5,
             )
-            reference = np.full((2, 1, 2, 2), 7, dtype=np.float32)
+            reference = np.full((2, 2, 2, 2), 7, dtype=np.float32)
             simulated = np.full_like(reference, 3)
             salt_inputs = []
-
-            class FakeTiffReader:
-                def __enter__(self):
-                    return self
-
-                def __exit__(self, *args):
-                    return None
-
-                @staticmethod
-                def asarray():
-                    return reference
+            write_float32_tiff(task.source, np.zeros_like(reference))
+            write_float32_tiff(task.reference_path, reference)
 
             salt_module = types.ModuleType("utils.salt")
 
@@ -747,17 +927,17 @@ class StagedWorkflowTests(unittest.TestCase):
                 self.assertEqual(path, task.simulated_path)
                 np.testing.assert_array_equal(stack, simulated)
                 self.assertEqual(axes, "TZYX")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b"simulated")
+                write_float32_tiff(path, stack)
 
             final_output = task.out_dir / task.exp_name / f"{task.exp_name}_SPRT.tif"
+
+            def run_support(**kwargs):
+                self.assertEqual(kwargs["input_path"], task.simulated_path)
+                write_float32_tiff(final_output, simulated)
+                return final_output
+
             with (
                 mock.patch.dict(sys.modules, {"utils.salt": salt_module}),
-                mock.patch.object(
-                    SNR.tifffile,
-                    "TiffFile",
-                    return_value=FakeTiffReader(),
-                ) as reader,
                 mock.patch.object(
                     SNR,
                     "_write_simulated_tiff",
@@ -766,13 +946,12 @@ class StagedWorkflowTests(unittest.TestCase):
                 mock.patch.object(
                     SNR,
                     "_run_support",
-                    return_value=final_output,
+                    side_effect=run_support,
                 ) as run_support,
             ):
                 result = SNR._run_task(task, configuration, object(), gpu_slot=1)
 
             self.assertEqual(result, final_output)
-            reader.assert_called_once_with(task.reference_path)
             self.assertEqual(len(salt_inputs), 1)
             np.testing.assert_array_equal(salt_inputs[0][0], reference)
             self.assertEqual(salt_inputs[0][1], 0.4)
@@ -785,261 +964,308 @@ class StagedWorkflowTests(unittest.TestCase):
                 task.simulated_path,
             )
 
-    def test_staged_sweep_uses_fresh_outputs_and_skips_failed_dependencies(self) -> None:
+    def test_staged_sweep_delegates_to_cooperative_scheduler(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            sources = (root / "good.tif", root / "bad.tif")
+            sources = tuple(root / name for name in ("first.tif", "second.tif"))
             original_tasks = SNR.build_original_tasks(sources, root / "outputs")
             power_tasks = SNR.build_sweep_tasks(
-                sources,
-                [100, 50],
-                root / "outputs",
+                sources, (100, 40), root / "outputs"
             )
-            fresh_reference = root / "fresh-good-original.tif"
-            original_results = (
+            selected_gpus = ((0, "GPU-a"), (1, "GPU-b"))
+            configuration = WorkerBehaviorTests._configuration(root)
+            expected = (
                 SNR.TaskResult(
-                    0,
-                    0,
-                    sources[0].resolve(),
-                    None,
-                    True,
-                    fresh_reference,
-                    stage="original",
-                ),
-                SNR.TaskResult(
-                    1,
-                    1,
-                    sources[1].resolve(),
-                    None,
-                    False,
-                    error="baseline exploded",
-                    stage="original",
+                    task_index=0,
+                    gpu_slot=0,
+                    source=power_tasks[0].source,
+                    power=power_tasks[0].power,
+                    success=False,
+                    error="owned elsewhere",
+                    deferred=True,
                 ),
             )
-            configuration = SNR.replace(
-                WorkerBehaviorTests._configuration(root),
-                photon_zero_level=6.25,
-            )
 
-            def run_power(runnable, *_args):
-                self.assertEqual(len(runnable), 2)
-                self.assertTrue(all(task.source == sources[0].resolve() for task in runnable))
-                self.assertTrue(all(task.reference_path == fresh_reference for task in runnable))
-                self.assertTrue(all(task.photons_per_unit == 0.01 for task in runnable))
-                self.assertTrue(all(task.zero_photon_level == 6.25 for task in runnable))
-                return tuple(
-                    SNR.TaskResult(
-                        task.index,
-                        0,
-                        task.source,
-                        task.power,
-                        True,
-                        root / f"clean-{task.index}.tif",
-                    )
-                    for task in runnable
-                )
-
-            with (
-                mock.patch.object(
-                    SNR,
-                    "run_parallel_originals",
-                    return_value=original_results,
-                ) as run_originals,
-                mock.patch.object(
-                    SNR,
-                    "run_parallel_sweep",
-                    side_effect=run_power,
-                ) as run_sweep,
-                mock.patch.object(
-                    SNR,
-                    "_estimate_source_photons_per_unit",
-                ) as estimate_photons,
-            ):
+            with mock.patch.object(
+                SNR,
+                "_run_cooperative_sweep",
+                return_value=expected,
+            ) as run_cooperative:
                 results = SNR.run_staged_sweep(
                     original_tasks,
                     power_tasks,
-                    ((0, "GPU-a"), (1, "GPU-b")),
+                    selected_gpus,
                     configuration,
                 )
 
-            run_originals.assert_called_once()
-            run_sweep.assert_called_once()
-            estimate_photons.assert_not_called()
-            self.assertEqual([result.task_index for result in results], [0, 1, 2, 3])
-            self.assertEqual([result.success for result in results], [True, True, False, False])
-            self.assertTrue(all("not started" in result.error for result in results[2:]))
-            self.assertTrue(all("baseline exploded" in result.error for result in results[2:]))
+            self.assertIs(results, expected)
+            run_cooperative.assert_called_once_with(
+                original_tasks,
+                power_tasks,
+                selected_gpus,
+                configuration,
+            )
 
-    def test_staged_sweep_estimates_once_and_reuses_value_for_all_powers(self) -> None:
+    def test_staged_sweep_validates_photon_settings_before_spawning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "raw.tif"
+            original_tasks = SNR.build_original_tasks((source,), root / "outputs")
+            power_tasks = SNR.build_sweep_tasks(
+                (source,), (100,), root / "outputs"
+            )
+            configuration = SNR.replace(
+                WorkerBehaviorTests._configuration(root),
+                photons_per_unit=-0.01,
+            )
+
+            with (
+                mock.patch.object(SNR, "_run_cooperative_sweep") as coordinator,
+                self.assertRaisesRegex(ValueError, "finite and positive"),
+            ):
+                SNR.run_staged_sweep(
+                    original_tasks,
+                    power_tasks,
+                    ((0, "GPU-a"),),
+                    configuration,
+                )
+
+            coordinator.assert_not_called()
+
+    def test_source_calibration_selects_automatic_estimate_and_pedestal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             source = (root / "raw.tif").resolve()
-            original_tasks = SNR.build_original_tasks((source,), root / "outputs")
-            power_tasks = SNR.build_sweep_tasks(
-                (source,), (100, 70, 40), root / "outputs"
-            )
-            fresh_reference = (root / "fresh-original.tif").resolve()
-            original_results = (
-                SNR.TaskResult(
-                    0,
-                    0,
-                    source,
-                    None,
-                    True,
-                    fresh_reference,
-                    stage="original",
-                ),
-            )
+            reference = (root / "raw-original.tif").resolve()
             configuration = SNR.replace(
                 WorkerBehaviorTests._configuration(root),
                 photons_per_unit=None,
                 use_estimated_photon_pedestal=True,
             )
-
-            def run_power(runnable, *_args):
-                self.assertEqual(len(runnable), 3)
-                self.assertTrue(
-                    all(task.reference_path == fresh_reference for task in runnable)
-                )
-                self.assertTrue(
-                    all(task.photons_per_unit == 0.0037 for task in runnable)
-                )
-                self.assertTrue(
-                    all(task.zero_photon_level == 12.5 for task in runnable)
-                )
-                return tuple(
-                    SNR.TaskResult(
-                        task.index,
-                        0,
-                        task.source,
-                        task.power,
-                        True,
-                        root / f"clean-{task.index}.tif",
-                    )
-                    for task in runnable
-                )
+            estimate = SimpleNamespace(
+                photons_per_unit=0.0037,
+                effective_support_pedestal=12.5,
+            )
 
             with (
                 mock.patch.object(
                     SNR,
-                    "run_parallel_originals",
-                    return_value=original_results,
-                ),
-                mock.patch.object(
-                    SNR,
                     "_estimate_source_photons_per_unit",
-                    return_value=SimpleNamespace(
-                        photons_per_unit=0.0037,
-                        effective_support_pedestal=12.5,
-                    ),
+                    return_value=estimate,
                 ) as estimate_photons,
-                mock.patch.object(
-                    SNR,
-                    "run_parallel_sweep",
-                    side_effect=run_power,
-                ),
-            ):
-                results = SNR.run_staged_sweep(
-                    original_tasks,
-                    power_tasks,
-                    ((0, "GPU-a"),),
-                    configuration,
-                )
-
-            estimate_photons.assert_called_once_with(
-                source, fresh_reference, configuration
-            )
-            self.assertTrue(all(result.success for result in results))
-
-    def test_staged_sweep_keeps_automatic_estimates_isolated_per_source(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            sources = tuple(
-                (root / name).resolve() for name in ("first.tif", "second.tif")
-            )
-            original_tasks = SNR.build_original_tasks(sources, root / "outputs")
-            power_tasks = SNR.build_sweep_tasks(
-                sources, (100, 40), root / "outputs"
-            )
-            references = {
-                sources[0]: (root / "first-reference.tif").resolve(),
-                sources[1]: (root / "second-reference.tif").resolve(),
-            }
-            original_results = tuple(
-                SNR.TaskResult(
-                    task.index,
-                    0,
-                    task.source,
-                    None,
-                    True,
-                    references[task.source],
-                    stage="original",
-                )
-                for task in original_tasks
-            )
-            expected_photons = {sources[0]: 0.0011, sources[1]: 0.0022}
-            configuration = SNR.replace(
-                WorkerBehaviorTests._configuration(root),
-                photons_per_unit=None,
-            )
-
-            def estimate(source, reference, _configuration):
-                self.assertEqual(reference, references[source])
-                return SimpleNamespace(
-                    photons_per_unit=expected_photons[source],
-                    effective_support_pedestal=17.0,
-                )
-
-            def run_power(runnable, *_args):
-                self.assertEqual(len(runnable), 4)
-                for task in runnable:
-                    self.assertEqual(
-                        task.photons_per_unit, expected_photons[task.source]
-                    )
-                    self.assertEqual(task.reference_path, references[task.source])
-                return tuple(
-                    SNR.TaskResult(
-                        task.index,
-                        0,
-                        task.source,
-                        task.power,
-                        True,
-                        root / f"clean-{task.index}.tif",
-                    )
-                    for task in runnable
-                )
-
-            with (
-                mock.patch.object(
-                    SNR,
-                    "run_parallel_originals",
-                    return_value=original_results,
-                ),
-                mock.patch.object(
-                    SNR,
-                    "_estimate_source_photons_per_unit",
-                    side_effect=estimate,
-                ) as estimate_photons,
-                mock.patch.object(
-                    SNR,
-                    "run_parallel_sweep",
-                    side_effect=run_power,
-                ),
                 redirect_stdout(io.StringIO()),
             ):
-                results = SNR.run_staged_sweep(
-                    original_tasks,
-                    power_tasks,
-                    ((0, "GPU-a"),),
+                result = SNR._resolve_source_calibration(
+                    source,
+                    reference,
                     configuration,
                 )
 
-            self.assertEqual(estimate_photons.call_count, 2)
-            self.assertEqual(
-                {call.args[0] for call in estimate_photons.call_args_list},
-                set(sources),
+            self.assertEqual(result, (0.0037, 12.5))
+            estimate_photons.assert_called_once_with(
+                source,
+                reference,
+                configuration,
             )
-            self.assertTrue(all(result.success for result in results))
+
+    def test_cooperative_worker_skips_busy_original_and_starts_next_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            sources = tuple(root / name for name in ("a.tif", "b.tif"))
+            original_tasks = SNR.build_original_tasks(sources, root / "outputs")
+            power_tasks = SNR.build_sweep_tasks(
+                sources,
+                (100,),
+                root / "outputs",
+            )
+            queue = RecordingQueue()
+            events = []
+            fake_torch = SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_available=lambda: True,
+                    device_count=lambda: 1,
+                    set_device=lambda _device: None,
+                    get_device_name=lambda _device: "Fake GPU",
+                )
+            )
+
+            def run_original(task, *_args):
+                events.append(("original", task.source.name))
+                if task.source == original_tasks[0].source:
+                    raise SNR.TaskBusyError("A is owned by the first job")
+                return task.output_path
+
+            def run_power(task, *_args):
+                events.append(("power", task.source.name, task.power))
+                raise SNR.TaskBusyError("power is owned elsewhere")
+
+            with (
+                mock.patch.dict(sys.modules, {"torch": fake_torch}),
+                mock.patch.object(
+                    SNR,
+                    "_completed_support_output_is_reusable",
+                    return_value=False,
+                ),
+                mock.patch.object(
+                    SNR,
+                    "_run_original_task",
+                    side_effect=run_original,
+                ),
+                mock.patch.object(SNR, "_run_task", side_effect=run_power),
+                redirect_stdout(io.StringIO()),
+            ):
+                SNR._cooperative_gpu_worker(
+                    1,
+                    "GPU-b",
+                    original_tasks,
+                    power_tasks,
+                    WorkerBehaviorTests._configuration(root),
+                    queue,
+                )
+
+            self.assertEqual(
+                events[:2],
+                [("original", "a.tif"), ("original", "b.tif")],
+            )
+            self.assertEqual(
+                [
+                    (result.stage, result.source.name)
+                    for result in queue.items
+                    if result.success
+                ],
+                [("original", "b.tif")],
+            )
+
+    def test_cooperative_worker_splits_powers_before_next_raw_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            sources = tuple(root / name for name in ("a.tif", "b.tif"))
+            original_tasks = SNR.build_original_tasks(sources, root / "outputs")
+            power_tasks = SNR.build_sweep_tasks(
+                sources,
+                (100, 90),
+                root / "outputs",
+            )
+            queue = RecordingQueue()
+            events = []
+            fake_torch = SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_available=lambda: True,
+                    device_count=lambda: 1,
+                    set_device=lambda _device: None,
+                    get_device_name=lambda _device: "Fake GPU",
+                )
+            )
+
+            def reusable(output_path, _input_path):
+                return Path(output_path) == original_tasks[0].output_path
+
+            def run_original(task, *_args):
+                events.append(("original", task.source.name))
+                raise SNR.TaskBusyError("the next source is owned elsewhere")
+
+            def run_power(task, *_args):
+                events.append(("power", task.source.name, task.power))
+                if task.source == original_tasks[0].source and task.power == 100:
+                    raise SNR.TaskBusyError("100 percent is already claimed")
+                return SNR._power_output_path(task)
+
+            with (
+                mock.patch.dict(sys.modules, {"torch": fake_torch}),
+                mock.patch.object(
+                    SNR,
+                    "_completed_support_output_is_reusable",
+                    side_effect=reusable,
+                ),
+                mock.patch.object(
+                    SNR,
+                    "_run_original_task",
+                    side_effect=run_original,
+                ),
+                mock.patch.object(SNR, "_run_task", side_effect=run_power),
+                redirect_stdout(io.StringIO()),
+            ):
+                SNR._cooperative_gpu_worker(
+                    1,
+                    "GPU-b",
+                    original_tasks,
+                    power_tasks,
+                    WorkerBehaviorTests._configuration(root),
+                    queue,
+                )
+
+            ninety = ("power", "a.tif", 90)
+            next_original = ("original", "b.tif")
+            self.assertIn(ninety, events)
+            self.assertIn(next_original, events)
+            self.assertLess(events.index(ninety), events.index(next_original))
+            successful_powers = [
+                result
+                for result in queue.items
+                if result.stage == "power" and result.success
+            ]
+            self.assertEqual(
+                [(result.source.name, result.power) for result in successful_powers],
+                [("a.tif", 90)],
+            )
+
+    def test_cooperative_worker_adopts_power_without_original_or_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "a.tif"
+            original_tasks = SNR.build_original_tasks((source,), root / "outputs")
+            power_tasks = SNR.build_sweep_tasks(
+                (source,),
+                (100,),
+                root / "outputs",
+            )
+            completed_output = SNR._power_output_path(power_tasks[0])
+            queue = RecordingQueue()
+            fake_torch = SimpleNamespace(
+                cuda=SimpleNamespace(
+                    is_available=lambda: True,
+                    device_count=lambda: 1,
+                    set_device=lambda _device: None,
+                    get_device_name=lambda _device: "Fake GPU",
+                )
+            )
+
+            with (
+                mock.patch.dict(sys.modules, {"torch": fake_torch}),
+                mock.patch.object(
+                    SNR,
+                    "_completed_support_output_is_reusable",
+                    side_effect=lambda output_path, _input_path: (
+                        Path(output_path) == completed_output
+                    ),
+                ),
+                mock.patch.object(SNR, "_run_original_task") as run_original,
+                mock.patch.object(SNR, "_run_task") as run_power,
+                mock.patch.object(
+                    SNR,
+                    "_resolve_source_calibration",
+                ) as calibrate,
+                redirect_stdout(io.StringIO()),
+            ):
+                SNR._cooperative_gpu_worker(
+                    0,
+                    "GPU-a",
+                    original_tasks,
+                    power_tasks,
+                    SNR.replace(
+                        WorkerBehaviorTests._configuration(root),
+                        photons_per_unit=None,
+                    ),
+                    queue,
+                )
+
+            run_original.assert_not_called()
+            run_power.assert_not_called()
+            calibrate.assert_not_called()
+            self.assertEqual(len(queue.items), 1)
+            self.assertTrue(queue.items[0].success)
+            self.assertEqual(queue.items[0].stage, "power")
+            self.assertEqual(queue.items[0].output_path, completed_output)
 
     def test_tiff_calibration_helper_passes_the_default_central_window(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1236,6 +1462,9 @@ class RunTaskCleanupTests(unittest.TestCase):
             out_dir=root / "outputs" / "source",
             simulated_path=root / "outputs" / "source_050" / "source_050.tif",
         )
+        sample_stack = np.ones((2, 2, 2, 2), dtype=np.float32)
+        write_float32_tiff(task.source, sample_stack)
+        write_float32_tiff(task.reference_path, sample_stack)
         configuration = SNR.SweepConfiguration(
             repository=root,
             input_root=root,
@@ -1298,6 +1527,7 @@ class RunTaskCleanupTests(unittest.TestCase):
                 events.append("tester_run")
                 if failure_stage == "testing":
                     raise RuntimeError("testing failed")
+                write_float32_tiff(self.out_path, sample_stack + 1)
 
             def release_resources(self):
                 events.append("tester_release")
@@ -1365,23 +1595,10 @@ class RunTaskCleanupTests(unittest.TestCase):
             manual_seed=lambda seed: events.append(("seed", seed)),
             cuda=SimpleNamespace(empty_cache=lambda: events.append("empty_cache")),
         )
-        class FakeTiffReader:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return None
-
-            @staticmethod
-            def asarray():
-                return np.ones((2, 1, 2, 2), dtype=np.float32)
-
-        tiff_reader = FakeTiffReader()
 
         def publish(path, stack, axes):
             events.append(("publish", axes))
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b"simulated")
+            write_float32_tiff(path, stack)
 
         stubs = {
             "utils.salt": salt_module,
@@ -1391,7 +1608,6 @@ class RunTaskCleanupTests(unittest.TestCase):
         }
         with (
             mock.patch.dict(sys.modules, stubs),
-            mock.patch.object(SNR.tifffile, "TiffFile", return_value=tiff_reader),
             mock.patch.object(SNR, "_write_simulated_tiff", side_effect=publish),
         ):
             if failure_stage is None:
@@ -1542,6 +1758,184 @@ class FakeContext:
         process = FakeProcess(target=target, args=args, name=name, exitcode=exitcode)
         self.processes.append(process)
         return process
+
+
+class CooperativeAggregationTests(unittest.TestCase):
+    @staticmethod
+    def _inventory(root: Path):
+        source = root / "raw.tif"
+        write_float32_tiff(source)
+        original_tasks = SNR.build_original_tasks((source,), root / "outputs")
+        power_tasks = SNR.build_sweep_tasks(
+            (source,),
+            (100,),
+            root / "outputs",
+        )
+        return original_tasks, power_tasks
+
+    def test_unclaimed_work_is_deferred_when_workers_exit_normally(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            original_tasks, power_tasks = self._inventory(root)
+            task = power_tasks[0]
+            context = FakeContext(
+                [
+                    SNR.TaskResult(
+                        task_index=task.index,
+                        gpu_slot=0,
+                        source=task.source,
+                        power=task.power,
+                        success=False,
+                        error="owned by another submission",
+                        deferred=True,
+                    )
+                ]
+            )
+
+            with mock.patch.object(
+                SNR.multiprocessing,
+                "get_context",
+                return_value=context,
+            ):
+                results = SNR._run_cooperative_sweep(
+                    original_tasks,
+                    power_tasks,
+                    ((0, "GPU-a"),),
+                    WorkerBehaviorTests._configuration(root),
+                )
+
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].success)
+            self.assertTrue(results[0].deferred)
+            self.assertEqual(context.processes[0].name, "snr-cooperative-gpu-0")
+
+    def test_valid_final_output_overrides_a_worker_failure_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            original_tasks, power_tasks = self._inventory(root)
+            task = power_tasks[0]
+            write_float32_tiff(SNR._power_output_path(task))
+            reported_failure = SNR.TaskResult(
+                task_index=task.index,
+                gpu_slot=0,
+                source=task.source,
+                power=task.power,
+                success=False,
+                error="one worker failed before its peer completed",
+            )
+            context = FakeContext([reported_failure], exitcodes=[1])
+
+            with mock.patch.object(
+                SNR.multiprocessing,
+                "get_context",
+                return_value=context,
+            ):
+                results = SNR._run_cooperative_sweep(
+                    original_tasks,
+                    power_tasks,
+                    ((0, "GPU-a"),),
+                    WorkerBehaviorTests._configuration(root),
+                )
+
+            self.assertTrue(results[0].success)
+            self.assertFalse(results[0].deferred)
+            self.assertEqual(results[0].output_path, SNR._power_output_path(task))
+
+    def test_abnormal_worker_exit_overrides_stale_busy_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            original_tasks, power_tasks = self._inventory(root)
+            task = power_tasks[0]
+            deferred = SNR.TaskResult(
+                task_index=task.index,
+                gpu_slot=0,
+                source=task.source,
+                power=task.power,
+                success=False,
+                error="peer owned this task before crashing",
+                deferred=True,
+            )
+            context = FakeContext([deferred], exitcodes=[9])
+
+            with mock.patch.object(
+                SNR.multiprocessing,
+                "get_context",
+                return_value=context,
+            ):
+                results = SNR._run_cooperative_sweep(
+                    original_tasks,
+                    power_tasks,
+                    ((0, "GPU-a"),),
+                    WorkerBehaviorTests._configuration(root),
+                )
+
+            self.assertFalse(results[0].success)
+            self.assertFalse(results[0].deferred)
+            self.assertIn("exited with status 9", results[0].error)
+
+    def test_restart_validation_rejects_nonfinite_and_wrong_dtype_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            raw_path = root / "raw.tif"
+            output_path = root / "clean.tif"
+            raw = write_float32_tiff(raw_path)
+
+            bad_values = raw.copy()
+            bad_values.flat[-1] = np.nan
+            write_float32_tiff(output_path, bad_values)
+            with redirect_stderr(io.StringIO()):
+                self.assertFalse(
+                    SNR._completed_support_output_is_reusable(
+                        output_path,
+                        raw_path,
+                    )
+                )
+
+            SNR.tifffile.imwrite(
+                output_path,
+                np.zeros(raw.shape, dtype=np.uint16),
+                imagej=True,
+                metadata={"axes": "TYX"},
+            )
+            with redirect_stderr(io.StringIO()):
+                self.assertFalse(
+                    SNR._completed_support_output_is_reusable(
+                        output_path,
+                        raw_path,
+                    )
+                )
+
+            write_float32_tiff(output_path, raw + 1)
+            self.assertTrue(
+                SNR._completed_support_output_is_reusable(output_path, raw_path)
+            )
+
+    def test_restart_validation_treats_corrupt_compressed_tiff_as_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            raw_path = root / "raw.tif"
+            output_path = root / "clean.tif"
+            raw = write_float32_tiff(raw_path, shape=(3, 16, 16))
+            SNR.tifffile.imwrite(
+                output_path,
+                raw,
+                compression="deflate",
+                photometric="minisblack",
+                metadata={"axes": "TYX"},
+            )
+            with SNR.tifffile.TiffFile(output_path) as tif:
+                first_offset = int(tif.series[0].pages[0].dataoffsets[0])
+            with output_path.open("r+b") as handle:
+                handle.seek(first_offset)
+                handle.write(b"\x00\x00")
+
+            with redirect_stderr(io.StringIO()):
+                self.assertFalse(
+                    SNR._completed_support_output_is_reusable(
+                        output_path,
+                        raw_path,
+                    )
+                )
 
 
 class ParallelSweepAggregationTests(unittest.TestCase):

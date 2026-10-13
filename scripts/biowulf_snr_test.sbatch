@@ -56,4 +56,10 @@ export MKL_NUM_THREADS=1
 export MPLBACKEND=Agg
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-exec python -u notebooks/snr_test.py --repository "${REPO_DIR}" "$@"
+exec python -u notebooks/snr_test.py \
+    --repository "${REPO_DIR}" \
+    --n-cpu "${SLURM_CPUS_PER_TASK}" \
+    --no-train-pin-memory \
+    --no-test-pin-memory \
+    --slack-webhook-file /data/garfinkeljb/.secrets/support-slack-webhook \
+    "$@"

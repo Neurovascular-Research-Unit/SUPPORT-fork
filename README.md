@@ -123,16 +123,17 @@ guidance.
 Slurm sets `CUDA_VISIBLE_DEVICES`; the batch runner leaves that allocation
 unchanged and uses `SLURM_CPUS_PER_TASK` as the DataLoader worker count.
 
-## Staged Multi-GPU SNR Sweeps
+## Cooperative SNR Power Sweeps
 
-`notebooks/snr_test.py` first trains and runs SUPPORT once per raw input TIFF to
-create a persistent denoised reference named `<stem>_original_SPRT.tif`. After
-all successful references are available, it simulates every configured power
-level from that denoised reference—not from the raw acquisition—and gives each
-simulated stack its own SUPPORT model. The recursively scanned input directory
-may contain any positive number of `.tif` or `.tiff` files; every discovered
-TIFF becomes an independent source. Input stems must be unique across the tree
-because each stem defines its output namespace. Configure `dir_noisy`,
+`notebooks/snr_test.py` trains and runs SUPPORT once per raw input TIFF to create
+a persistent denoised reference named `<stem>_original_SPRT.tif`. It then
+simulates each configured power level from that denoised reference—not from the
+raw acquisition—and gives each simulated stack its own SUPPORT model. Work is
+scheduled source by source, so another worker can cooperate through the shared
+output tree. The recursively scanned input directory may contain any positive
+number of `.tif` or `.tiff` files; every discovered TIFF becomes an independent
+source. Input stems must be unique across the tree because each stem defines its
+output namespace. Configure `dir_noisy`,
 `dimensionality`, `power_percent`, and the other sweep settings near the top of
 the script, or override the paths and sweep settings with command-line options,
 then run:
@@ -152,19 +153,54 @@ sbatch scripts/biowulf_snr_test.sbatch \
   --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
 ```
 
-The batch job requests one A100, 16 CPUs, 240 GB RAM, 200 GB local scratch, and
-24 hours by default. Slurm resource overrides go before the script path; SNR
-runner options go after it. See `scripts/README.md` for multi-GPU sizing and
-scratch guidance.
+To use two GPUs without putting both in one allocation, submit that exact
+command twice. The two one-GPU jobs cooperate on the same output namespace. An
+equivalent two-task array is:
 
-Pass `--no-train-pin-memory` and/or `--no-test-pin-memory` to disable pinned
-host memory independently for the training and inference DataLoaders.
-The optional private mode-0600 `--slack-webhook-file` enables start, per-epoch,
-completion, and failure messages for every independent original/power model.
+```bash
+sbatch --array=0-1%2 scripts/biowulf_snr_test.sbatch \
+  --input-directory /data/$USER/snr-input \
+  --output-directory /data/$USER/snr-output \
+  --dimensionality '3+1D' \
+  --power-percent 100 90 80 70 60 50 40 \
+  --slack-webhook-file /data/$USER/.secrets/support-slack-webhook
+```
 
-With `photons_per_unit = None` (the default), the stage barrier independently
-recomputes a photon-transfer calibration for every successful discovered
-raw/original-SUPPORT pair on every invocation.
+Each batch task still requests one A100, 6 CPUs, 164 GB RAM, 200 GB local
+scratch, and 8 hours. Slurm resource overrides go before the script path; SNR
+runner options go after it. Every cooperating invocation must use the same
+resolved input and output directories and identical model, simulation,
+calibration, and ordered power arguments. See `scripts/README.md` for multi-GPU
+sizing and scratch guidance.
+
+Workers inspect work in source-first order. If the first raw TIFF still needs
+its original denoised and another worker holds that original's lock, the second
+worker advances to the next raw TIFF. If the original is already complete, the
+workers can claim distinct power experiments for that same source. Lock
+contention is deferred work, not a failure, and does not by itself produce a
+nonzero batch exit.
+
+On restart, a readable `float32` `_SPRT.tif` with the expected shape is adopted
+as complete, including a result produced before cooperative scheduling was
+added. An incomplete model directory retains its checkpoints and resumes under
+its lock, so the same command can continue an interrupted or partially complete
+sweep. The `.snr_job.lock` files inside experiment directories are persistent
+sidecars: seeing an unlocked one after a job finishes is normal. Never delete,
+rename, or replace one while related jobs may still be active, because a new
+inode would no longer coordinate with workers holding the old one.
+
+For direct Python runs, pass `--no-train-pin-memory` and/or
+`--no-test-pin-memory` to disable pinned host memory independently for the two
+DataLoaders, and use a private mode-0600 `--slack-webhook-file` for model
+notifications. The Biowulf SNR wrapper supplies both no-pin-memory flags and
+`/data/garfinkeljb/.secrets/support-slack-webhook` by default; trailing runner
+arguments can override the webhook path.
+
+With `photons_per_unit = None` (the default), a worker computes a photon-transfer
+calibration when it claims unfinished power work for a successful
+raw/original-SUPPORT pair and reuses that calibration for the source within the
+worker. Already completed, valid power outputs do not require recalibration on
+restart.
 It measures raw adjacent-frame variance using the denoised SUPPORT intensity as
 the cleaner horizontal axis, converts the result into SUPPORT image units, and
 reuses that value for every power level from the same source. It also compares
@@ -207,10 +243,11 @@ python -u notebooks/snr_test.py --gpus 0 2
 
 Use `--gpus 0` for the single-GPU fallback. Each selected GPU receives its own
 worker process and runs complete jobs serially; this is job-level parallelism,
-not `DataParallel` or distributed model training. The original-image stage
-finishes before any dependent power job starts. A failed original skips only
-that source's power jobs; other sources continue. Training batch size and the
-other model hyperparameters therefore retain their single-GPU meaning.
+not `DataParallel` or distributed model training. A source's original finishes
+before any of its dependent power jobs starts, but there is no all-sources
+barrier. A failed original skips only that source's power jobs; other sources
+continue. Training batch size and the other model hyperparameters therefore
+retain their single-GPU meaning.
 
 `power_percent` denotes measured excitation power at the specimen. The
 simulator uses the two-photon relationship `intensity_ratio = power_ratio**2`,
@@ -225,12 +262,12 @@ As elsewhere in SUPPORT, checkpoint resume assumes the source TIFF, parameter
 file, and simulation settings have not changed. Use a new output namespace or
 disable/remove the prior checkpoints when changing that provenance.
 
-Resource settings are per GPU. In particular, `n_cpu = 8` can create up to
-eight DataLoader workers for each GPU worker, and each concurrent job needs its
-own host RAM, GPU memory, and input I/O bandwidth. Allocate CPUs and memory for
-the selected GPU count, or select fewer GPUs when those resources are limited.
-Run only one SNR sweep process against a given output tree at a time; that one
-process schedules all selected GPUs itself.
+Resource settings are per GPU. `n_cpu` controls the DataLoader worker count for
+each GPU worker, and each concurrent job needs its own host RAM, GPU memory, and
+input I/O bandwidth. Allocate CPUs and memory for the selected GPU count, or
+select fewer GPUs when those resources are limited. Cooperating Slurm
+submissions each retain their own allocation; use identical sweep arguments so
+they agree on the shared work inventory.
 
 ## Running the Notebook
 

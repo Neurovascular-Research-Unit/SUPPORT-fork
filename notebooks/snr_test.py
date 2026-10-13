@@ -1,26 +1,29 @@
-"""Build clean references, then train/test SNR sweep jobs across multiple GPUs.
+"""Cooperatively train and test restartable SUPPORT SNR sweep jobs.
 
-The sweep has two stages separated by a dependency barrier. First, each raw
-input TIFF is denoised once with SUPPORT to create a persistent ``original``
-reference. Every configured power level is then simulated from that common
-reference and denoised by its own SUPPORT model. Multi-GPU execution
-happens at the job level and preserves the single-GPU model hyperparameters.
+Each raw TIFF first gets one persistent denoised ``original`` reference. Power
+models derived from a ready reference are then independent. Persistent advisory
+locks let multiple local GPU workers or overlapping Slurm submissions share the
+same output tree without training the same logical model twice.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import gc
 import json
 import multiprocessing
 import os
+import socket
+import stat
 import sys
 import tempfile
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
 from queue import Empty
-from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Iterator, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import tifffile
@@ -35,6 +38,16 @@ if TYPE_CHECKING:
 # Direct script runs default to the repository containing this file. The
 # notebook can still supply its own repository path through SweepConfiguration.
 path_support = Path(__file__).resolve().parents[1]
+SNR_JOB_LOCK_NAME = ".snr_job.lock"
+_COMPLETED_OUTPUT_VALIDATION_CACHE: dict[
+    tuple[
+        Path,
+        tuple[int, int, int, int, int],
+        Path,
+        tuple[int, int, int, int, int],
+    ],
+    bool,
+] = {}
 
 
 # Basic configuration. Model parameters are read from parameters.json.
@@ -42,8 +55,8 @@ dir_noisy = Path("/Volumes/Amreen_Mughal_lab/20260921_snrTest/01_data")
 dimensionality = "3+1D"
 power_percent = [100, 90, 80, 70, 60, 50, 40]
 
-# ``None`` estimates one value per raw/SUPPORT pair after the original-image
-# stage. Set a positive float to bypass estimation with an explicit override.
+# ``None`` estimates one value per raw/SUPPORT pair when a worker first claims
+# unfinished power work. Set a positive float to use an explicit override.
 photons_per_unit = None
 # A fixed additive detector/digitizer baseline stays constant while
 # fluorescence, including out-of-focus background, scales with power. Low
@@ -132,10 +145,20 @@ class TaskResult:
     output_path: Optional[Path] = None
     error: str = ""
     stage: str = "power"
+    deferred: bool = False
+    output_signature: Optional[tuple[int, int, int, int, int]] = None
 
 
 class ResourceCleanupError(RuntimeError):
     """Raised when a worker cannot safely continue after releasing a job."""
+
+
+class TaskBusyError(RuntimeError):
+    """Raised when another SNR submission owns one logical model."""
+
+
+class PhotonCalibrationError(RuntimeError):
+    """Raised when a source cannot supply parameters for its power jobs."""
 
 
 def nonnegative_int(value: str) -> int:
@@ -197,8 +220,8 @@ def _new_slack_notifier(repository: Path, webhook_file: Optional[Path]):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Denoise each source once, then run independent SUPPORT SNR sweep "
-            "jobs concurrently with one single-GPU worker per selected GPU."
+            "Cooperatively denoise each source once, then claim independent "
+            "SUPPORT SNR power jobs with one worker per selected GPU."
         )
     )
     parser.add_argument(
@@ -496,6 +519,186 @@ def partition_tasks(
     return {slot: tuple(assigned) for slot, assigned in assignments.items()}
 
 
+def _power_output_path(task: SweepTask) -> Path:
+    """Return the stable final output path for one simulated-power model."""
+    return task.out_dir / task.exp_name / f"{task.exp_name}_SPRT.tif"
+
+
+def _regular_file_signature(path: Path) -> tuple[int, int, int, int, int]:
+    """Return a change-sensitive identity for one nonempty regular file."""
+    path = Path(path)
+    if path.is_symlink():
+        raise ValueError(f"file must not be a symbolic link: {path}")
+    file_stat = path.stat()
+    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size <= 0:
+        raise ValueError(f"file is missing, empty, or not regular: {path}")
+    return (
+        int(file_stat.st_dev),
+        int(file_stat.st_ino),
+        int(file_stat.st_size),
+        int(file_stat.st_mtime_ns),
+        int(file_stat.st_ctime_ns),
+    )
+
+
+def _tiff_shape(path: Path) -> tuple[int, ...]:
+    """Read one TIFF's logical shape without materializing the full stack."""
+    path = Path(path)
+    if path.is_symlink():
+        raise ValueError(f"TIFF must not be a symbolic link: {path}")
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise ValueError(f"TIFF is missing or empty: {path}")
+    with tifffile.TiffFile(path) as tif:
+        if not tif.series:
+            raise ValueError(f"TIFF contains no image series: {path}")
+        series = tif.series[0]
+        if not series.pages:
+            raise ValueError(f"TIFF contains no image pages: {path}")
+        return tuple(int(value) for value in series.shape)
+
+
+def _verify_completed_support_output(
+    output_path: Path,
+    input_path: Path,
+) -> Path:
+    """Validate an atomic SUPPORT TIFF before treating it as complete."""
+    output_path = Path(output_path)
+    if output_path.is_symlink():
+        raise ValueError(f"SUPPORT output must not be a symbolic link: {output_path}")
+    if not output_path.is_file() or output_path.stat().st_size <= 0:
+        raise ValueError(f"SUPPORT output is missing or empty: {output_path}")
+    output_stat = output_path.stat()
+    if not stat.S_ISREG(output_stat.st_mode):
+        raise ValueError(f"SUPPORT output is not a regular file: {output_path}")
+    expected_shape = _tiff_shape(input_path)
+
+    with tifffile.TiffFile(output_path) as tif:
+        if not tif.series:
+            raise ValueError(f"SUPPORT output contains no TIFF series: {output_path}")
+        series = tif.series[0]
+        actual_shape = tuple(int(value) for value in series.shape)
+        actual_dtype = np.dtype(series.dtype)
+        if actual_shape != expected_shape:
+            raise ValueError(
+                f"SUPPORT output shape {actual_shape} does not match input "
+                f"shape {expected_shape}: {output_path}"
+            )
+        if actual_dtype != np.dtype(np.float32):
+            raise ValueError(
+                f"SUPPORT output dtype {actual_dtype} is not float32: "
+                f"{output_path}"
+            )
+        if not series.pages:
+            raise ValueError(f"SUPPORT output contains no TIFF pages: {output_path}")
+        file_size = output_stat.st_size
+        for page_index, page in enumerate(series.pages):
+            offsets = tuple(int(value) for value in page.dataoffsets)
+            byte_counts = tuple(int(value) for value in page.databytecounts)
+            if not offsets or len(offsets) != len(byte_counts):
+                raise ValueError(
+                    f"SUPPORT output page {page_index} has invalid TIFF data "
+                    f"offset metadata: {output_path}"
+                )
+            if any(
+                offset < 0 or count <= 0 or offset + count > file_size
+                for offset, count in zip(offsets, byte_counts)
+            ):
+                raise ValueError(
+                    f"SUPPORT output page {page_index} references data outside "
+                    f"the TIFF file: {output_path}"
+                )
+            values = np.asarray(page.asarray())
+            if values.size == 0 or not np.isfinite(values).all():
+                raise ValueError(
+                    f"SUPPORT output page {page_index} is empty or contains "
+                    f"non-finite values: {output_path}"
+                )
+    return output_path
+
+
+def _completed_support_output_is_reusable(
+    output_path: Path,
+    input_path: Path,
+) -> bool:
+    """Return whether an existing final TIFF is a safe restart boundary."""
+    output_path = Path(output_path)
+    input_path = Path(input_path)
+    cache_key = None
+    try:
+        output_signature = _regular_file_signature(output_path)
+        input_signature = _regular_file_signature(input_path)
+        cache_key = (
+            output_path.absolute(),
+            output_signature,
+            input_path.absolute(),
+            input_signature,
+        )
+        if cache_key in _COMPLETED_OUTPUT_VALIDATION_CACHE:
+            return _COMPLETED_OUTPUT_VALIDATION_CACHE[cache_key]
+        _verify_completed_support_output(output_path, input_path)
+    except Exception as exc:
+        # Cache deterministic structural/content failures, but allow a later
+        # scan to retry transient filesystem I/O errors without requiring the
+        # file metadata to change first.
+        if cache_key is not None and not isinstance(exc, OSError):
+            _COMPLETED_OUTPUT_VALIDATION_CACHE[cache_key] = False
+        if output_path.exists():
+            print(
+                f"WARNING: existing SUPPORT output is not reusable "
+                f"({type(exc).__name__}: {exc}); it will be regenerated.",
+                file=sys.stderr,
+                flush=True,
+            )
+        return False
+    _COMPLETED_OUTPUT_VALIDATION_CACHE[cache_key] = True
+    return True
+
+
+@contextlib.contextmanager
+def _exclusive_snr_job_lock(experiment_directory: Path) -> Iterator[Path]:
+    """Nonblockingly claim one model across overlapping Slurm submissions."""
+    experiment_directory = Path(experiment_directory)
+    if experiment_directory.is_symlink():
+        raise ValueError(
+            f"SNR experiment directory must not be a symlink: "
+            f"{experiment_directory}"
+        )
+    experiment_directory.mkdir(parents=True, exist_ok=True)
+    if not experiment_directory.is_dir():
+        raise ValueError(
+            f"SNR experiment path is not a directory: {experiment_directory}"
+        )
+    lock_path = experiment_directory / SNR_JOB_LOCK_NAME
+    if lock_path.is_symlink():
+        raise ValueError(f"SNR job lock must not be a symlink: {lock_path}")
+
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        lock_stat = os.fstat(handle.fileno())
+        if not stat.S_ISREG(lock_stat.st_mode):
+            raise ValueError(f"SNR job lock is not a regular file: {lock_path}")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.seek(0)
+            owner = handle.read().strip() or "owner details unavailable"
+            raise TaskBusyError(
+                f"another submission owns {experiment_directory}: {owner}"
+            ) from exc
+
+        handle.seek(0)
+        handle.truncate()
+        handle.write(
+            f"job_id={os.environ.get('SLURM_JOB_ID', '')} "
+            f"hostname={socket.gethostname()} pid={os.getpid()}\n"
+        )
+        handle.flush()
+        os.fsync(handle.fileno())
+        try:
+            yield lock_path
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _write_simulated_tiff(path: Path, stack: np.ndarray, axes: str) -> None:
     """Atomically publish a simulated stack so failed writes cannot be resumed."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -647,6 +850,115 @@ def _estimate_source_photons_per_unit(
                 + "; ".join(estimate.warnings)
             )
     return estimate
+
+
+def _validated_photon_configuration(
+    configuration: SweepConfiguration,
+) -> tuple[Optional[float], float]:
+    """Validate and normalize sweep-wide photon settings."""
+    configured_photons_per_unit = None
+    if configuration.photons_per_unit is not None:
+        try:
+            configured_photons_per_unit = float(configuration.photons_per_unit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "photons_per_unit override must be finite and positive"
+            ) from exc
+        if (
+            not np.isfinite(configured_photons_per_unit)
+            or configured_photons_per_unit <= 0
+        ):
+            raise ValueError(
+                "photons_per_unit override must be finite and positive"
+            )
+
+    try:
+        configured_zero_level = float(configuration.photon_zero_level)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("photon_zero_level must be a finite scalar") from exc
+    if not np.isfinite(configured_zero_level):
+        raise ValueError("photon_zero_level must be a finite scalar")
+    if (
+        configuration.use_estimated_photon_pedestal
+        and configured_photons_per_unit is not None
+    ):
+        raise ValueError(
+            "use_estimated_photon_pedestal requires automatic photon "
+            "calibration (photons_per_unit=None)"
+        )
+    if (
+        configuration.use_estimated_photon_pedestal
+        and configured_zero_level != 0.0
+    ):
+        raise ValueError(
+            "Set either photon_zero_level or use_estimated_photon_pedestal, "
+            "not both"
+        )
+    if (
+        configured_photons_per_unit is None
+        and configuration.dimensionality == "3D"
+    ):
+        raise ValueError(
+            "Static 3D data require an explicit photons_per_unit because the "
+            "photon-transfer estimator needs repeated time frames."
+        )
+    return configured_photons_per_unit, configured_zero_level
+
+
+def _resolve_source_calibration(
+    source: Path,
+    reference_path: Path,
+    configuration: SweepConfiguration,
+) -> tuple[float, float]:
+    """Resolve one source's simulation scale after its power lock is claimed."""
+    configured_photons_per_unit, configured_zero_level = (
+        _validated_photon_configuration(configuration)
+    )
+    if configured_photons_per_unit is not None:
+        return configured_photons_per_unit, configured_zero_level
+
+    try:
+        estimate = _estimate_source_photons_per_unit(
+            source,
+            reference_path,
+            configuration,
+        )
+        estimated_photons_per_unit = float(estimate.photons_per_unit)
+        if (
+            not np.isfinite(estimated_photons_per_unit)
+            or estimated_photons_per_unit <= 0
+        ):
+            raise ValueError(
+                "The estimated photons_per_unit is not finite and positive"
+            )
+        if configuration.use_estimated_photon_pedestal:
+            selected_zero_level = float(estimate.effective_support_pedestal)
+            if not np.isfinite(selected_zero_level):
+                raise ValueError(
+                    "The fitted effective SUPPORT pedestal is not finite"
+                )
+            print(
+                "WARNING: using the extrapolated fitted effective pedestal "
+                f"{selected_zero_level:.9g} for {Path(source).name}; this is "
+                "not a dark-frame measurement.",
+                flush=True,
+            )
+        else:
+            selected_zero_level = configured_zero_level
+            print(
+                f"Using configured photon_zero_level "
+                f"{configured_zero_level:.9g} for {Path(source).name}; fitted "
+                f"candidate was {estimate.effective_support_pedestal:.9g}.",
+                flush=True,
+            )
+        return estimated_photons_per_unit, selected_zero_level
+    except PhotonCalibrationError:
+        raise
+    except Exception as exc:
+        raise PhotonCalibrationError(
+            f"Photon calibration failed for {Path(source)}: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def _close_resource_log(resource) -> None:
@@ -846,20 +1158,39 @@ def _run_original_task(
     gpu_slot: int,
 ) -> Path:
     """Denoise one raw source to create the persistent simulation reference."""
+    if _completed_support_output_is_reusable(task.output_path, task.source):
+        print(
+            f"[GPU {gpu_slot}] Reusing completed original for "
+            f"{task.source.name}: {task.output_path}",
+            flush=True,
+        )
+        return task.output_path
+
     print(
         f"[GPU {gpu_slot}] Original job {task.index + 1}: {task.source.name}",
         flush=True,
     )
-    output_path = _run_support(
-        input_path=task.source,
-        exp_name=task.exp_name,
-        out_dir=task.out_dir,
-        output_path=task.output_path,
-        configuration=configuration,
-        torch=torch,
-    )
-    print(f"Created denoised original image at {output_path}", flush=True)
-    return output_path
+    with _exclusive_snr_job_lock(task.output_path.parent):
+        # A different submission may have published the output between the
+        # optimistic check above and this lock acquisition.
+        if _completed_support_output_is_reusable(task.output_path, task.source):
+            print(
+                f"[GPU {gpu_slot}] Reusing newly completed original for "
+                f"{task.source.name}: {task.output_path}",
+                flush=True,
+            )
+            return task.output_path
+        output_path = _run_support(
+            input_path=task.source,
+            exp_name=task.exp_name,
+            out_dir=task.out_dir,
+            output_path=task.output_path,
+            configuration=configuration,
+            torch=torch,
+        )
+        _verify_completed_support_output(output_path, task.source)
+        print(f"Created denoised original image at {output_path}", flush=True)
+        return output_path
 
 
 def _run_task(
@@ -867,85 +1198,110 @@ def _run_task(
     configuration: SweepConfiguration,
     torch,
     gpu_slot: int,
+    calibration_cache: Optional[dict[Path, tuple[float, float]]] = None,
 ) -> Path:
     """Simulate one power from its denoised reference, then run SUPPORT."""
-    _ensure_repository_importable(configuration.repository)
-    if __package__:
-        from ..utils.salt import simulate_lower_power
-    else:
-        from utils.salt import simulate_lower_power
-
-    task_photons_per_unit = (
-        task.photons_per_unit
-        if task.photons_per_unit is not None
-        else configuration.photons_per_unit
-    )
-    try:
-        task_photons_per_unit = float(task_photons_per_unit)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "Power jobs require a finite positive photons_per_unit"
-        ) from exc
-    if not np.isfinite(task_photons_per_unit) or task_photons_per_unit <= 0:
-        raise ValueError(
-            "Power jobs require a finite positive photons_per_unit. Run them "
-            "through run_staged_sweep for automatic calibration or provide an "
-            "explicit override."
+    output_path = _power_output_path(task)
+    if _completed_support_output_is_reusable(output_path, task.source):
+        print(
+            f"[GPU {gpu_slot}] Reusing completed {task.power}% power output "
+            f"for {task.source.name}: {output_path}",
+            flush=True,
         )
-    task_zero_photon_level = (
-        task.zero_photon_level
-        if task.zero_photon_level is not None
-        else configuration.photon_zero_level
-    )
-    try:
-        task_zero_photon_level = float(task_zero_photon_level)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("zero_photon_level must be a finite scalar") from exc
-    if not np.isfinite(task_zero_photon_level):
-        raise ValueError("zero_photon_level must be a finite scalar")
+        return output_path
 
-    print(
-        f"[GPU {gpu_slot}] Power job {task.index + 1}: "
-        f"{task.source.name} at {task.power}% power "
-        f"(photons_per_unit={task_photons_per_unit:.9g}, "
-        f"zero_photon_level={task_zero_photon_level:.9g})",
-        flush=True,
-    )
-    with tifffile.TiffFile(task.reference_path) as tif:
-        stack = tif.asarray()
-    stack = simulate_lower_power(
-        stack,
-        task.power / 100,
-        # ``power`` is measured excitation power at the specimen. Unsaturated
-        # two-photon fluorescence, including optical background, scales as P^2.
-        gamma=2.0,
-        photons_per_unit=task_photons_per_unit,
-        zero_photon_level=task_zero_photon_level,
-    )
-    if stack.ndim == 4:
-        axes = "TZYX"
-    elif configuration.dimensionality == "3D":
-        axes = "ZYX"
-    else:
-        axes = "TYX"
-    print(f"Saving simulated TIFF to {task.simulated_path}...", flush=True)
-    _write_simulated_tiff(task.simulated_path, stack, axes)
-    del stack
+    with _exclusive_snr_job_lock(output_path.parent):
+        if _completed_support_output_is_reusable(output_path, task.source):
+            print(
+                f"[GPU {gpu_slot}] Reusing newly completed {task.power}% "
+                f"power output for {task.source.name}: {output_path}",
+                flush=True,
+            )
+            if configuration.rm_tmp and task.simulated_path.is_file():
+                task.simulated_path.unlink()
+            return output_path
 
-    output_path = _run_support(
-        input_path=task.simulated_path,
-        exp_name=task.exp_name,
-        out_dir=task.out_dir,
-        output_path=(
-            task.out_dir / task.exp_name / f"{task.exp_name}_SPRT.tif"
-        ),
-        configuration=configuration,
-        torch=torch,
-    )
+        _ensure_repository_importable(configuration.repository)
+        if __package__:
+            from ..utils.salt import simulate_lower_power
+        else:
+            from utils.salt import simulate_lower_power
 
-    if configuration.rm_tmp:
-        task.simulated_path.unlink()
-    return output_path
+        if task.photons_per_unit is None:
+            cache = calibration_cache if calibration_cache is not None else {}
+            calibration_key = Path(task.source).resolve()
+            if calibration_key not in cache:
+                cache[calibration_key] = _resolve_source_calibration(
+                    task.source,
+                    task.reference_path,
+                    configuration,
+                )
+            task_photons_per_unit, task_zero_photon_level = cache[calibration_key]
+        else:
+            task_photons_per_unit = task.photons_per_unit
+            task_zero_photon_level = (
+                task.zero_photon_level
+                if task.zero_photon_level is not None
+                else configuration.photon_zero_level
+            )
+        try:
+            task_photons_per_unit = float(task_photons_per_unit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Power jobs require a finite positive photons_per_unit"
+            ) from exc
+        if not np.isfinite(task_photons_per_unit) or task_photons_per_unit <= 0:
+            raise ValueError(
+                "Power jobs require a finite positive photons_per_unit. Run "
+                "them through run_staged_sweep for automatic calibration or "
+                "provide an explicit override."
+            )
+        try:
+            task_zero_photon_level = float(task_zero_photon_level)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("zero_photon_level must be a finite scalar") from exc
+        if not np.isfinite(task_zero_photon_level):
+            raise ValueError("zero_photon_level must be a finite scalar")
+
+        print(
+            f"[GPU {gpu_slot}] Power job {task.index + 1}: "
+            f"{task.source.name} at {task.power}% power "
+            f"(photons_per_unit={task_photons_per_unit:.9g}, "
+            f"zero_photon_level={task_zero_photon_level:.9g})",
+            flush=True,
+        )
+        with tifffile.TiffFile(task.reference_path) as tif:
+            stack = tif.asarray()
+        stack = simulate_lower_power(
+            stack,
+            task.power / 100,
+            # Measured two-photon excitation power at the specimen scales P^2.
+            gamma=2.0,
+            photons_per_unit=task_photons_per_unit,
+            zero_photon_level=task_zero_photon_level,
+        )
+        if stack.ndim == 4:
+            axes = "TZYX"
+        elif configuration.dimensionality == "3D":
+            axes = "ZYX"
+        else:
+            axes = "TYX"
+        print(f"Saving simulated TIFF to {task.simulated_path}...", flush=True)
+        _write_simulated_tiff(task.simulated_path, stack, axes)
+        del stack
+
+        completed_path = _run_support(
+            input_path=task.simulated_path,
+            exp_name=task.exp_name,
+            out_dir=task.out_dir,
+            output_path=output_path,
+            configuration=configuration,
+            torch=torch,
+        )
+        _verify_completed_support_output(completed_path, task.source)
+        if configuration.rm_tmp:
+            task.simulated_path.unlink()
+        return completed_path
 
 
 def _gpu_worker(
@@ -1000,6 +1356,27 @@ def _gpu_worker(
     for position, task in enumerate(tasks):
         try:
             output_path = runner(task, configuration, torch, gpu_slot)
+        except TaskBusyError as exc:
+            print(
+                f"GPU worker {gpu_slot} deferred {stage} job for "
+                f"{task.source}"
+                + (f" at {task.power}%" if task.power is not None else "")
+                + f": {exc}",
+                flush=True,
+            )
+            result_queue.put(
+                TaskResult(
+                    task_index=task.index,
+                    gpu_slot=gpu_slot,
+                    source=task.source,
+                    power=task.power,
+                    success=False,
+                    error=str(exc),
+                    stage=stage,
+                    deferred=True,
+                )
+            )
+            continue
         except Exception as exc:
             failures += 1
             error = "".join(
@@ -1057,6 +1434,581 @@ def _gpu_worker(
 
     if failures:
         raise SystemExit(1)
+
+
+def _cooperative_gpu_worker(
+    gpu_slot: int,
+    device_token: str,
+    original_tasks: Sequence[OriginalTask],
+    power_tasks: Sequence[SweepTask],
+    configuration: SweepConfiguration,
+    result_queue,
+) -> None:
+    """Claim source-major work shared by every local or remote worker.
+
+    Locks, rather than a static partition, decide ownership. After every
+    completed model the scan restarts at the first source. This makes a worker
+    skip a locked, not-yet-denoised source, while letting workers split power
+    models as soon as that source's original is complete.
+    """
+    os.environ["CUDA_VISIBLE_DEVICES"] = device_token
+    repository = str(configuration.repository)
+    if repository not in sys.path:
+        sys.path.insert(0, repository)
+
+    try:
+        import torch
+
+        if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
+            raise RuntimeError(
+                f"GPU worker {gpu_slot} could not isolate CUDA device "
+                f"{device_token!r}"
+            )
+        torch.cuda.set_device(0)
+        print(
+            f"GPU worker {gpu_slot}: {torch.cuda.get_device_name(0)}; "
+            f"cooperatively scanning {len(original_tasks)} source(s) and "
+            f"{len(power_tasks)} power job(s)",
+            flush=True,
+        )
+    except BaseException as exc:
+        error = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+        for task in power_tasks:
+            result_queue.put(
+                TaskResult(
+                    task_index=task.index,
+                    gpu_slot=gpu_slot,
+                    source=task.source,
+                    power=task.power,
+                    success=False,
+                    error=error,
+                    stage="power",
+                )
+            )
+        raise
+
+    powers_by_source: dict[Path, list[SweepTask]] = {
+        task.source: [] for task in original_tasks
+    }
+    for task in power_tasks:
+        powers_by_source[task.source].append(task)
+
+    ready_originals: set[Path] = set()
+    completed_powers: set[int] = set()
+    attempted_original_failures: set[int] = set()
+    attempted_power_failures: set[int] = set()
+    reported_original_successes: set[int] = set()
+    reported_power_successes: set[int] = set()
+    reported_original_deferrals: set[int] = set()
+    reported_power_deferrals: set[int] = set()
+    calibration_cache: dict[Path, tuple[float, float]] = {}
+    failures = 0
+    stop_worker = False
+
+    def report_success(
+        task: Union[OriginalTask, SweepTask],
+        output_path: Path,
+        stage: str,
+    ) -> None:
+        reported = (
+            reported_original_successes
+            if stage == "original"
+            else reported_power_successes
+        )
+        if task.index in reported:
+            return
+        reported.add(task.index)
+        try:
+            output_signature = _regular_file_signature(output_path)
+        except (OSError, ValueError):
+            # The coordinator will perform the authoritative final check. This
+            # also covers an external deletion immediately after validation.
+            output_signature = None
+        result_queue.put(
+            TaskResult(
+                task_index=task.index,
+                gpu_slot=gpu_slot,
+                source=task.source,
+                power=task.power,
+                success=True,
+                output_path=Path(output_path),
+                stage=stage,
+                output_signature=output_signature,
+            )
+        )
+
+    def report_failure(
+        task: Union[OriginalTask, SweepTask],
+        error: str,
+        stage: str,
+    ) -> None:
+        nonlocal failures
+        failures += 1
+        result_queue.put(
+            TaskResult(
+                task_index=task.index,
+                gpu_slot=gpu_slot,
+                source=task.source,
+                power=task.power,
+                success=False,
+                error=error,
+                stage=stage,
+            )
+        )
+
+    def report_deferred(
+        task: Union[OriginalTask, SweepTask],
+        error: str,
+        stage: str,
+    ) -> None:
+        reported = (
+            reported_original_deferrals
+            if stage == "original"
+            else reported_power_deferrals
+        )
+        if task.index in reported:
+            return
+        reported.add(task.index)
+        result_queue.put(
+            TaskResult(
+                task_index=task.index,
+                gpu_slot=gpu_slot,
+                source=task.source,
+                power=task.power,
+                success=False,
+                error=error,
+                stage=stage,
+                deferred=True,
+            )
+        )
+
+    while not stop_worker:
+        completed_model = False
+        for original_task in original_tasks:
+            source = original_task.source
+            source_power_tasks = powers_by_source[source]
+
+            # Existing power outputs are authoritative and need neither the
+            # original reference nor a new photon calibration.
+            for task in source_power_tasks:
+                if task.index in completed_powers:
+                    continue
+                output_path = _power_output_path(task)
+                if _completed_support_output_is_reusable(output_path, task.source):
+                    completed_powers.add(task.index)
+                    report_success(task, output_path, "power")
+
+            if all(task.index in completed_powers for task in source_power_tasks):
+                continue
+
+            if source not in ready_originals:
+                if _completed_support_output_is_reusable(
+                    original_task.output_path,
+                    original_task.source,
+                ):
+                    ready_originals.add(source)
+                    report_success(
+                        original_task,
+                        original_task.output_path,
+                        "original",
+                    )
+                elif original_task.index in attempted_original_failures:
+                    continue
+                else:
+                    try:
+                        output_path = _run_original_task(
+                            original_task,
+                            configuration,
+                            torch,
+                            gpu_slot,
+                        )
+                    except TaskBusyError as exc:
+                        # Another worker owns this prerequisite. Move to the
+                        # next raw source instead of waiting on its lock.
+                        report_deferred(original_task, str(exc), "original")
+                        continue
+                    except Exception as exc:
+                        attempted_original_failures.add(original_task.index)
+                        error = "".join(
+                            traceback.format_exception(
+                                type(exc), exc, exc.__traceback__
+                            )
+                        )
+                        print(
+                            f"GPU worker {gpu_slot} failed original job for "
+                            f"{source}:\n{error}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        report_failure(original_task, error, "original")
+                        if isinstance(exc, ResourceCleanupError):
+                            stop_worker = True
+                            break
+                        continue
+                    else:
+                        ready_originals.add(source)
+                        report_success(original_task, output_path, "original")
+                        completed_model = True
+                        break
+
+            if source not in ready_originals:
+                continue
+
+            for task in source_power_tasks:
+                if (
+                    task.index in completed_powers
+                    or task.index in attempted_power_failures
+                ):
+                    continue
+                try:
+                    output_path = _run_task(
+                        task,
+                        configuration,
+                        torch,
+                        gpu_slot,
+                        calibration_cache,
+                    )
+                except TaskBusyError as exc:
+                    # A ready source may have several independent power jobs;
+                    # try its next power before advancing to the next source.
+                    report_deferred(task, str(exc), "power")
+                    continue
+                except PhotonCalibrationError as exc:
+                    error = "".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    )
+                    print(error, file=sys.stderr, flush=True)
+                    for blocked_task in source_power_tasks:
+                        if (
+                            blocked_task.index in completed_powers
+                            or blocked_task.index in attempted_power_failures
+                        ):
+                            continue
+                        attempted_power_failures.add(blocked_task.index)
+                        blocked_error = (
+                            error
+                            if blocked_task.index == task.index
+                            else "Power job was not started because source photon "
+                            f"calibration failed: {exc}"
+                        )
+                        report_failure(blocked_task, blocked_error, "power")
+                    break
+                except Exception as exc:
+                    attempted_power_failures.add(task.index)
+                    error = "".join(
+                        traceback.format_exception(type(exc), exc, exc.__traceback__)
+                    )
+                    print(
+                        f"GPU worker {gpu_slot} failed power job for "
+                        f"{task.source} at {task.power}%:\n{error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    report_failure(task, error, "power")
+                    if isinstance(exc, ResourceCleanupError):
+                        stop_worker = True
+                        break
+                    continue
+                else:
+                    completed_powers.add(task.index)
+                    report_success(task, output_path, "power")
+                    completed_model = True
+                    break
+
+            if stop_worker or completed_model:
+                break
+
+        # A full source-major pass with no claim means every unfinished model
+        # is either locked by another submission or already failed here. Do
+        # not spin or turn ordinary lock contention into a job failure.
+        if stop_worker or not completed_model:
+            break
+
+    if failures:
+        print(
+            f"GPU worker {gpu_slot} reported {failures} model failure(s); "
+            "the parent process will determine the sweep exit status.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _run_cooperative_sweep(
+    original_tasks: Sequence[OriginalTask],
+    power_tasks: Sequence[SweepTask],
+    selected_gpus: Sequence[tuple[int, str]],
+    configuration: SweepConfiguration,
+) -> tuple[TaskResult, ...]:
+    """Run one shared lock-based work inventory on every selected GPU."""
+    original_tasks = tuple(original_tasks)
+    power_tasks = tuple(power_tasks)
+    if not power_tasks:
+        return ()
+    selected_gpus = tuple(selected_gpus)
+    if not selected_gpus:
+        raise ValueError("at least one GPU must be selected")
+
+    sources = [task.source for task in original_tasks]
+    if len(set(sources)) != len(sources):
+        raise ValueError("original task sources must be unique")
+    original_indices = [task.index for task in original_tasks]
+    if len(set(original_indices)) != len(original_indices):
+        raise ValueError("original task indexes must be unique")
+    original_by_source = {task.source: task for task in original_tasks}
+    missing_sources = sorted(
+        {task.source for task in power_tasks} - set(original_by_source),
+        key=str,
+    )
+    if missing_sources:
+        raise ValueError(
+            f"Power task has no original task for source {missing_sources[0]}"
+        )
+    mismatched_reference = next(
+        (
+            task
+            for task in power_tasks
+            if Path(task.reference_path)
+            != Path(original_by_source[task.source].output_path)
+        ),
+        None,
+    )
+    if mismatched_reference is not None:
+        raise ValueError(
+            "Power task reference does not match its original task output: "
+            f"{mismatched_reference.reference_path}"
+        )
+    power_indices = [task.index for task in power_tasks]
+    if len(set(power_indices)) != len(power_indices):
+        raise ValueError("power task indexes must be unique")
+
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    processes = []
+    reports: list[TaskResult] = []
+    try:
+        for slot, token in selected_gpus:
+            process = context.Process(
+                target=_cooperative_gpu_worker,
+                args=(
+                    slot,
+                    token,
+                    original_tasks,
+                    power_tasks,
+                    configuration,
+                    result_queue,
+                ),
+                name=f"snr-cooperative-gpu-{slot}",
+            )
+            process.start()
+            processes.append((slot, process))
+
+        while processes and any(process.is_alive() for _, process in processes):
+            try:
+                reports.append(result_queue.get(timeout=0.5))
+            except Empty:
+                continue
+        for _, process in processes:
+            process.join()
+        while True:
+            try:
+                reports.append(result_queue.get(timeout=0.1))
+            except Empty:
+                break
+    except BaseException:
+        for _, process in processes:
+            if process.is_alive():
+                process.terminate()
+        for _, process in processes:
+            process.join()
+        raise
+    finally:
+        result_queue.close()
+        result_queue.join_thread()
+
+    reports_by_key: dict[tuple[str, int], list[TaskResult]] = {}
+    for report in reports:
+        reports_by_key.setdefault((report.stage, report.task_index), []).append(
+            report
+        )
+    abnormal_slots = {
+        slot: process.exitcode
+        for slot, process in processes
+        if process.exitcode not in (0, None)
+    }
+
+    results = []
+    for task in power_tasks:
+        output_path = _power_output_path(task)
+        original_task = original_by_source[task.source]
+        task_reports = reports_by_key.get(("power", task.index), [])
+        successful_report = next(
+            (report for report in task_reports if report.success),
+            None,
+        )
+        reported_output_is_unchanged = False
+        if (
+            successful_report is not None
+            and successful_report.output_signature is not None
+        ):
+            try:
+                reported_output_is_unchanged = (
+                    _regular_file_signature(output_path)
+                    == successful_report.output_signature
+                )
+            except (OSError, ValueError):
+                pass
+        if reported_output_is_unchanged or _completed_support_output_is_reusable(
+            output_path,
+            task.source,
+        ):
+            results.append(
+                TaskResult(
+                    task_index=task.index,
+                    gpu_slot=(
+                        successful_report.gpu_slot
+                        if successful_report is not None
+                        else -1
+                    ),
+                    source=task.source,
+                    power=task.power,
+                    success=True,
+                    output_path=output_path,
+                    stage="power",
+                    output_signature=_regular_file_signature(output_path),
+                )
+            )
+            continue
+
+        failure_report = next(
+            (
+                report
+                for report in task_reports
+                if not report.success and not report.deferred
+            ),
+            None,
+        )
+        if failure_report is None:
+            if successful_report is not None:
+                failure_report = TaskResult(
+                    task_index=task.index,
+                    gpu_slot=successful_report.gpu_slot,
+                    source=task.source,
+                    power=task.power,
+                    success=False,
+                    output_path=successful_report.output_path,
+                    error=(
+                        "GPU worker reported success, but the final SUPPORT "
+                        "output is missing or invalid"
+                    ),
+                    stage="power",
+                )
+        if failure_report is None:
+            original_failures = reports_by_key.get(
+                ("original", original_task.index),
+                [],
+            )
+            original_failure = next(
+                (
+                    report
+                    for report in original_failures
+                    if not report.success and not report.deferred
+                ),
+                None,
+            )
+            if original_failure is not None:
+                final_line = (
+                    original_failure.error.strip().splitlines()[-1]
+                    if original_failure.error
+                    else "unknown original-image failure"
+                )
+                failure_report = TaskResult(
+                    task_index=task.index,
+                    gpu_slot=original_failure.gpu_slot,
+                    source=task.source,
+                    power=task.power,
+                    success=False,
+                    error=(
+                        "Power job was not started because its original-image "
+                        f"job failed: {final_line}"
+                    ),
+                    stage="power",
+                )
+
+        if failure_report is not None:
+            results.append(failure_report)
+            continue
+
+        if abnormal_slots:
+            slot = min(abnormal_slots)
+            results.append(
+                TaskResult(
+                    task_index=task.index,
+                    gpu_slot=slot,
+                    source=task.source,
+                    power=task.power,
+                    success=False,
+                    error=(
+                        f"GPU worker {slot} exited with status "
+                        f"{abnormal_slots[slot]} without reporting this task"
+                    ),
+                    stage="power",
+                )
+            )
+            continue
+
+        power_deferral = next(
+            (
+                report
+                for report in task_reports
+                if not report.success and report.deferred
+            ),
+            None,
+        )
+        original_deferral = next(
+            (
+                report
+                for report in reports_by_key.get(
+                    ("original", original_task.index),
+                    [],
+                )
+                if not report.success and report.deferred
+            ),
+            None,
+        )
+        deferral_report = power_deferral or original_deferral
+        if deferral_report is not None:
+            results.append(
+                TaskResult(
+                    task_index=task.index,
+                    gpu_slot=deferral_report.gpu_slot,
+                    source=task.source,
+                    power=task.power,
+                    success=False,
+                    error=deferral_report.error,
+                    stage="power",
+                    deferred=True,
+                )
+            )
+            continue
+
+        results.append(
+            TaskResult(
+                task_index=task.index,
+                gpu_slot=-1,
+                source=task.source,
+                power=task.power,
+                success=False,
+                error=(
+                    "Cooperative GPU workers exited without completing, "
+                    "failing, or deferring this task"
+                ),
+                stage="power",
+            )
+        )
+
+    return tuple(sorted(results, key=lambda result: result.task_index))
 
 
 def _run_parallel_stage(
@@ -1158,7 +2110,9 @@ def _run_parallel_stage(
             # sibling jobs remain valid. Only flag an abnormal exit when no task
             # failure from that worker explains it.
             if not any(
-                not other.success and other.gpu_slot == result.gpu_slot
+                not other.success
+                and not other.deferred
+                and other.gpu_slot == result.gpu_slot
                 for other in results.values()
             ):
                 results[result.task_index] = TaskResult(
@@ -1212,189 +2166,14 @@ def run_staged_sweep(
     selected_gpus: Sequence[tuple[int, str]],
     configuration: SweepConfiguration,
 ) -> tuple[TaskResult, ...]:
-    """Create originals, calibrate each source once, then run its power jobs."""
-    original_tasks = tuple(original_tasks)
-    power_tasks = tuple(power_tasks)
-    configured_photons_per_unit = None
-    if configuration.photons_per_unit is not None:
-        try:
-            configured_photons_per_unit = float(
-                configuration.photons_per_unit
-            )
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "photons_per_unit override must be finite and positive"
-            ) from exc
-        if (
-            not np.isfinite(configured_photons_per_unit)
-            or configured_photons_per_unit <= 0
-        ):
-            raise ValueError(
-                "photons_per_unit override must be finite and positive"
-            )
-    try:
-        configured_zero_level = float(configuration.photon_zero_level)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("photon_zero_level must be a finite scalar") from exc
-    if not np.isfinite(configured_zero_level):
-        raise ValueError("photon_zero_level must be a finite scalar")
-    if (
-        configuration.use_estimated_photon_pedestal
-        and configured_photons_per_unit is not None
-    ):
-        raise ValueError(
-            "use_estimated_photon_pedestal requires automatic photon "
-            "calibration (photons_per_unit=None)"
-        )
-    if (
-        configuration.use_estimated_photon_pedestal
-        and configured_zero_level != 0.0
-    ):
-        raise ValueError(
-            "Set either photon_zero_level or use_estimated_photon_pedestal, "
-            "not both"
-        )
-    if (
-        configured_photons_per_unit is None
-        and configuration.dimensionality == "3D"
-    ):
-        raise ValueError(
-            "Static 3D data require an explicit photons_per_unit because the "
-            "photon-transfer estimator needs repeated time frames."
-        )
-    original_results = run_parallel_originals(
+    """Validate settings, then cooperatively claim original and power models."""
+    _validated_photon_configuration(configuration)
+    return _run_cooperative_sweep(
         original_tasks,
+        power_tasks,
         selected_gpus,
         configuration,
     )
-    original_by_source = {result.source: result for result in original_results}
-    original_failures = sum(not result.success for result in original_results)
-    print(
-        "Original-image stage complete: "
-        f"{len(original_results) - original_failures} succeeded, "
-        f"{original_failures} failed.",
-        flush=True,
-    )
-
-    photon_values = {}
-    zero_levels = {}
-    photon_errors = {}
-    for original_result in original_results:
-        if not original_result.success or original_result.output_path is None:
-            continue
-        if configured_photons_per_unit is not None:
-            photon_values[original_result.source] = configured_photons_per_unit
-            zero_levels[original_result.source] = configured_zero_level
-            continue
-        try:
-            estimate = _estimate_source_photons_per_unit(
-                original_result.source,
-                Path(original_result.output_path),
-                configuration,
-            )
-            estimated_photons_per_unit = float(estimate.photons_per_unit)
-            if (
-                not np.isfinite(estimated_photons_per_unit)
-                or estimated_photons_per_unit <= 0
-            ):
-                raise ValueError(
-                    "The estimated photons_per_unit is not finite and positive"
-                )
-            if configuration.use_estimated_photon_pedestal:
-                estimated_pedestal = float(estimate.effective_support_pedestal)
-                if not np.isfinite(estimated_pedestal):
-                    raise ValueError(
-                        "The fitted effective SUPPORT pedestal is not finite"
-                    )
-                selected_zero_level = estimated_pedestal
-                print(
-                    "WARNING: using the extrapolated fitted effective pedestal "
-                    f"{estimated_pedestal:.9g} for "
-                    f"{original_result.source.name}; this is not a dark-frame "
-                    "measurement.",
-                    flush=True,
-                )
-            else:
-                selected_zero_level = configured_zero_level
-                print(
-                    f"Using configured photon_zero_level "
-                    f"{configured_zero_level:.9g} for "
-                    f"{original_result.source.name}; fitted candidate was "
-                    f"{estimate.effective_support_pedestal:.9g}.",
-                    flush=True,
-                )
-            # Commit both values together so a failed pedestal selection cannot
-            # leave a partially calibrated source eligible for power jobs.
-            photon_values[original_result.source] = estimated_photons_per_unit
-            zero_levels[original_result.source] = selected_zero_level
-        except Exception as exc:
-            photon_errors[original_result.source] = "".join(
-                traceback.format_exception(type(exc), exc, exc.__traceback__)
-            )
-            print(
-                f"Photon calibration failed for {original_result.source}:\n"
-                f"{photon_errors[original_result.source]}",
-                file=sys.stderr,
-                flush=True,
-            )
-
-    runnable = []
-    results = {}
-    for task in power_tasks:
-        original_result = original_by_source.get(task.source)
-        if (
-            original_result is not None
-            and original_result.success
-            and original_result.output_path is not None
-            and task.source in photon_values
-            and task.source in zero_levels
-        ):
-            # Use the output reported by this invocation, not a possibly stale
-            # TIFF left behind by an earlier failed run.
-            runnable.append(
-                replace(
-                    task,
-                    reference_path=Path(original_result.output_path),
-                    photons_per_unit=photon_values[task.source],
-                    zero_photon_level=zero_levels[task.source],
-                )
-            )
-            continue
-
-        if original_result is None:
-            gpu_slot = -1
-            reason = "original-image stage did not report a result"
-        elif task.source in photon_errors:
-            gpu_slot = original_result.gpu_slot
-            final_line = photon_errors[task.source].strip().splitlines()[-1]
-            reason = f"photon calibration failed: {final_line}"
-        else:
-            gpu_slot = original_result.gpu_slot
-            final_line = (
-                original_result.error.strip().splitlines()[-1]
-                if original_result.error
-                else "unknown original-image failure"
-            )
-            reason = f"original-image stage failed: {final_line}"
-        results[task.index] = TaskResult(
-            task_index=task.index,
-            gpu_slot=gpu_slot,
-            source=task.source,
-            power=task.power,
-            success=False,
-            error=f"Power job was not started because its {reason}",
-            stage="power",
-        )
-
-    if runnable:
-        for result in run_parallel_sweep(
-            runnable,
-            selected_gpus,
-            configuration,
-        ):
-            results[result.task_index] = result
-
-    return tuple(results[index] for index in sorted(results))
 
 
 def _discover_visible_devices() -> tuple[str, ...]:
@@ -1609,9 +2388,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         selected_gpus,
         configuration,
     )
-    failures = [result for result in results if not result.success]
-    successes = len(results) - len(failures)
-    print(f"SNR sweep complete: {successes} succeeded, {len(failures)} failed.")
+    failures = [
+        result for result in results if not result.success and not result.deferred
+    ]
+    deferred = [result for result in results if result.deferred]
+    successes = sum(result.success for result in results)
+    print(
+        f"SNR sweep complete: {successes} succeeded, "
+        f"{len(deferred)} deferred to another submission, "
+        f"{len(failures)} failed."
+    )
+    for result in deferred:
+        print(
+            f"DEFERRED: {result.source} at {result.power}% "
+            "is owned by another worker or awaits its prerequisite."
+        )
     for result in failures:
         final_line = (
             result.error.strip().splitlines()[-1]
