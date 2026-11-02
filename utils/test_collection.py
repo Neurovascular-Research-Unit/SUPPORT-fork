@@ -338,6 +338,8 @@ class TestingClass():
         if not self.pad:
             return denoised_stack
         crop_margin = (self.local_model.in_channels) // 2
+        if crop_margin == 0:
+            return denoised_stack
         return denoised_stack[crop_margin:-crop_margin, :, :]
 
     def save_inference(self, out_path, denoised_img, axes):

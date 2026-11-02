@@ -53,7 +53,7 @@ _COMPLETED_OUTPUT_VALIDATION_CACHE: dict[
 # Basic configuration. Model parameters are read from parameters.json.
 dir_noisy = Path("/Volumes/Amreen_Mughal_lab/20260921_snrTest/01_data")
 dimensionality = "3+1D"
-power_percent = [100, 90, 80, 70, 60, 50, 40]
+power_percent = [100, 90, 80, 70, 60, 50, 40, 30, 20]
 
 # ``None`` estimates one value per raw/SUPPORT pair when a worker first claims
 # unfinished power work. Set a positive float to use an explicit override.
@@ -110,6 +110,8 @@ class SweepConfiguration:
     train_pin_memory: Optional[bool] = None
     test_pin_memory: Optional[bool] = None
     slack_webhook_file: Optional[Path] = None
+    exclude_training_edge_frames: bool = False
+    test_pad: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -1045,6 +1047,7 @@ def _run_support(
             "checkpoints": configuration.checkpoints,
             "resume": configuration.resume,
             "rm_intermediaries": configuration.rm_intermediaries,
+            "exclude_training_edge_frames": configuration.exclude_training_edge_frames,
         }
     )
     if configuration.train_pin_memory is not None:
@@ -1059,6 +1062,7 @@ def _run_support(
     failure_stage = "training initialization"
     trainer = None
     tester = None
+    training_normalization = {}
     try:
         training_succeeded = False
         try:
@@ -1083,6 +1087,11 @@ def _run_support(
             failure_stage = "training"
             trainer.run()
             training_succeeded = True
+            if configuration.exclude_training_edge_frames:
+                mean = getattr(trainer, "normalization_mean", None)
+                std = getattr(trainer, "normalization_std", None)
+                if mean is not None and std is not None:
+                    training_normalization = {"normalization_mean": mean, "normalization_std": std}
             model_path = str(trainer.model_path).replace("/vf/users", "/data")
             test_out_dir = str(trainer.out_dir).replace("/vf/users", "/data")
             test_exp_name = trainer.exp_name
@@ -1116,7 +1125,8 @@ def _run_support(
             "bp": train_params.get("bp", False),
             "n_cpu": train_params["n_cpu"],
             "prefetch_factor": test_params["prefetch_factor"],
-            "pad": test_params["pad"],
+            "pad": configuration.test_pad if configuration.test_pad is not None else test_params["pad"],
+            **training_normalization,
         }
         failure_stage = "inference initialization"
         inference_succeeded = False
