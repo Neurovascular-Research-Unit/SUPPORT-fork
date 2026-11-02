@@ -84,6 +84,7 @@ class TrainingClass():
         self.batch_size = 16
         self.load_to_memory = True
         self.pin_memory = True
+        self.exclude_training_edge_frames = False
         # Generalized validation can need enough host RAM for another full TIFF.
         # Retain an exact normalized copy on job-local scratch and drop the
         # resident training tensors while the validation callback runs.
@@ -123,6 +124,7 @@ class TrainingClass():
         self._training_cache_owned = False
         self._suspended_training_dataset = None
         self._training_dataloader_batch_count = None
+        self._training_edge_sources_logged = set()
         self._checkpoint_controls_configured = any(
             key in params_dict
             for key in ("checkpoints", "resume", "rm_intermediaries", "save_every_epoch")
@@ -136,9 +138,12 @@ class TrainingClass():
             "save_every_epoch",
             "pin_memory",
             "offload_training_data_during_validation",
+            "exclude_training_edge_frames",
         ):
             if type(getattr(self, option)) is not bool:
                 raise TypeError(f"{option} must be True or False")
+        if self.exclude_training_edge_frames:
+            self._training_edge_margin()
         if self.save_every_epoch:
             self.checkpoints = True
         if self.epoch_end_callback is not None and not callable(self.epoch_end_callback):
@@ -294,6 +299,52 @@ class TrainingClass():
             return torch.from_numpy(np.ascontiguousarray(noisy_img, dtype=np.float32)).type(torch.FloatTensor)
         return noisy_img
 
+    def _training_edge_margin(self):
+        if self.dimensionality not in ("2+1D", "3+1D"):
+            raise ValueError("exclude_training_edge_frames requires temporal 2+1D or 3+1D data")
+        try:
+            temporal_patch = self.patch_size[0]
+        except (IndexError, TypeError) as exc:
+            raise ValueError("Temporal patch_size[0] must be a positive integer") from exc
+        if (isinstance(temporal_patch, (bool, np.bool_))
+                or not isinstance(temporal_patch, (int, np.integer)) or temporal_patch < 1):
+            raise ValueError("Temporal patch_size[0] must be a positive integer")
+        return int(temporal_patch) // 2
+
+    def _training_temporal_view(self, noisy_img, path):
+        """Exclude temporal edges from every training patch and its statistics.
+
+        Slice before splitting a TZYX volume into Z planes or normalizing any
+        data. Inference continues to read the complete, unchanged source TIFF.
+        """
+        if not getattr(self, "exclude_training_edge_frames", False):
+            return noisy_img
+        margin = self._training_edge_margin()
+        allowed_dimensions = (3, 4) if self.dimensionality == "3+1D" else (3,)
+        if noisy_img.ndim not in allowed_dimensions:
+            raise ValueError(f"Expected temporal TYX or TZYX training data; received {noisy_img.shape}")
+        total_frames = noisy_img.shape[0]
+        required_frames = int(self.patch_size[0]) + 2 * margin
+        if total_frames < required_frames:
+            raise ValueError(
+                f"Training frame exclusion requires at least {required_frames} temporal frames "
+                f"for patch_size[0]={self.patch_size[0]} and {margin} excluded frames at each edge; "
+                f"{path} has {total_frames} frames"
+            )
+        stop = total_frames - margin
+        source = str(Path(path).absolute())
+        logged_sources = getattr(self, "_training_edge_sources_logged", None)
+        if logged_sources is None:
+            logged_sources = self._training_edge_sources_logged = set()
+        if source not in logged_sources:
+            diagnostic = (f"Training frame exclusion for {path}: using frames [{margin}, {stop}) "
+                          f"of {total_frames}; excluded {margin} frames at each temporal edge.")
+            print(diagnostic, flush=True)
+            if hasattr(self, "log"):
+                self.log.log_diagnostic(diagnostic)
+            logged_sources.add(source)
+        return noisy_img[margin:stop] if margin else noisy_img
+
     def _describe_stack(self, noisy_shape):
         if self.dimensionality == "3+1D":
             if len(noisy_shape) == 4:
@@ -380,6 +431,7 @@ class TrainingClass():
         for source_index, (path, noisy_stem) in enumerate(zip(noisy_paths, noisy_stems)):
             noisy_img = self._read_stack(path)
             print(f"\033[1m{noisy_stem:<{slen}}\033[0m  {self._describe_stack(noisy_img.shape)}")
+            noisy_img = self._training_temporal_view(noisy_img, path)
             prepared_stacks = self._prepare_training_stacks(noisy_img)
             noisy_imgs.extend(prepared_stacks)
             if not self.train_gen:
@@ -405,6 +457,12 @@ class TrainingClass():
                 else None
             ),
         )
+        if (getattr(self, "exclude_training_edge_frames", False)
+                and not self.train_gen and len(noisy_paths) == 1):
+            # Full-stack inference must use the representation the model saw
+            # during training. All Z planes from this TIFF share these values.
+            self.normalization_mean = float(dataset.mean_images[0].item())
+            self.normalization_std = float(dataset.std_images[0].item())
         if self.train_gen:
             self.normalization_scope = "dataset"
             self.normalization_mean = float(dataset.dataset_mean.item())

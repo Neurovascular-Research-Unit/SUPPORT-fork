@@ -1447,12 +1447,17 @@ class RunTaskCleanupTests(unittest.TestCase):
         train_pin_memory=None,
         test_pin_memory=None,
         slack_notifications=False,
+        exclude_training_edge_frames=False,
+        test_pad=None,
+        configured_test_pad=True,
     ):
         temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(temporary_directory.cleanup)
         root = Path(temporary_directory.name)
         parameters_path = root / "parameters.json"
-        parameters_path.write_text(json.dumps(self._parameters()), encoding="utf-8")
+        parameters = self._parameters()
+        parameters["3+1D"]["test"]["pad"] = configured_test_pad
+        parameters_path.write_text(json.dumps(parameters), encoding="utf-8")
         task = SNR.SweepTask(
             index=0,
             source=root / "source.tif",
@@ -1480,6 +1485,8 @@ class RunTaskCleanupTests(unittest.TestCase):
             photons_per_unit=0.01,
             train_pin_memory=train_pin_memory,
             test_pin_memory=test_pin_memory,
+            exclude_training_edge_frames=exclude_training_edge_frames,
+            test_pad=test_pad,
             slack_webhook_file=(
                 root / "support-slack-webhook"
                 if slack_notifications
@@ -1491,6 +1498,8 @@ class RunTaskCleanupTests(unittest.TestCase):
         class FakeTrainer:
             def __init__(self, parameters):
                 events.append(("trainer_init", parameters))
+                self.normalization_mean = 7.5
+                self.normalization_std = 2.25
                 self.model_path = "/vf/users/model.pth"
                 self.out_dir = "/vf/users/results"
                 self.exp_name = task.exp_name
@@ -1672,6 +1681,21 @@ class RunTaskCleanupTests(unittest.TestCase):
                 )
                 self.assertIs(trainer_parameters["pin_memory"], expected_train)
                 self.assertIs(tester_parameters["pin_memory"], expected_test)
+
+    def test_run_task_protects_training_edges_and_pads_inference_despite_parameter_file(self) -> None:
+        _, events, _, error = self._run_case(
+            exclude_training_edge_frames=True, test_pad=True, configured_test_pad=False,
+        )
+        self.assertIsNone(error)
+        trainer_parameters = next(event[1] for event in events
+                                  if isinstance(event, tuple) and event[0] == "trainer_init")
+        tester_parameters = next(event[1] for event in events
+                                 if isinstance(event, tuple) and event[0] == "tester_init")
+        self.assertIs(trainer_parameters["exclude_training_edge_frames"], True)
+        self.assertIs(tester_parameters["pad"], True)
+        self.assertEqual(tester_parameters["normalization_mean"], 7.5)
+        self.assertEqual(tester_parameters["normalization_std"], 2.25)
+        self.assertEqual(trainer_parameters["in_path"], tester_parameters["in_path"])
 
     def test_run_task_sends_slack_lifecycle_for_each_model(self) -> None:
         _, events, _, error = self._run_case(slack_notifications=True)
