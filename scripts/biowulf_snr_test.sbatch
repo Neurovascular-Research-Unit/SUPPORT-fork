@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:a100:1,lscratch:200
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=164g
-#SBATCH --time=8:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=support-snr-test-%j.out
 
 set -euo pipefail

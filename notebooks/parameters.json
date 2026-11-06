@@ -59,7 +59,7 @@
       "batch_size": 512,
       "load_to_memory": true,
       "prefetch_factor": 2,
-      "lr": 5e-5,
+      "lr": 1e-3,
       "depth": 5,
       "bc_channels": 64,
       "obo_channels": [32, 16],
